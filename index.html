@@ -1,0 +1,679 @@
+<title>從 Work-item 到 SM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* Layout: one datasheet column — controls rail, a die-plot canvas stage, caption, then reference table and occupancy calculator */
+:root{
+  --bg:#eceee9; --surface:#f7f8f4; --surface2:#e1e4dc; --ink:#15181c; --muted:#596067; --line:#c4c9c0;
+  --accent:#ad4c1b; --accent2:#2b5f91; --lit:#d9961c; --good:#2f7a4c;
+  --wgL:46%; --wgS:50%;
+  --f-display:"Barlow Condensed","Noto Sans TC",sans-serif;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1216; --surface:#161a20; --surface2:#1f242c; --ink:#e2e5e0; --muted:#939aa2; --line:#2d333c;
+    --accent:#e8844d; --accent2:#83b4e3; --lit:#ffcf6e; --good:#6cc18e; --wgL:62%; --wgS:52%; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1216; --surface:#161a20; --surface2:#1f242c; --ink:#e2e5e0; --muted:#939aa2; --line:#2d333c;
+  --accent:#e8844d; --accent2:#83b4e3; --lit:#ffcf6e; --good:#6cc18e; --wgL:62%; --wgS:52%; color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--ink)}
+body{font-family:var(--f-body);font-size:15px;line-height:1.7;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 64px}
+.wrap{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+h1,h2,h3{font-family:var(--f-display);font-weight:700;line-height:1.15;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,54px);letter-spacing:.005em}
+h2{font-size:28px}
+h3{font-size:22px}
+p{margin:0}
+code,pre,.mono{font-family:var(--f-mono);font-size:.86em}
+code{background:var(--surface2);padding:1px 5px;border-radius:3px}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.lede{max-width:68ch;color:var(--muted);margin-top:10px}
+header{display:flex;flex-direction:column;gap:6px}
+
+.controls{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--surface)}
+.seg button,.btn{font:600 14px var(--f-display);letter-spacing:.04em;color:var(--ink);background:transparent;border:0;padding:7px 14px;cursor:pointer}
+.seg button + button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.btn{border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.btn:hover,.seg button:hover{color:var(--accent)}
+.seg button[aria-pressed="true"]:hover{color:var(--bg)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.steps .n{font-family:var(--f-mono);font-size:11px;opacity:.7;margin-right:5px}
+
+.stage-wrap{position:relative;overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+#stage{display:block;width:100%;min-width:760px;aspect-ratio:960/560;height:auto}
+#tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font:12px/1.5 var(--f-mono);padding:7px 10px;border-radius:5px;white-space:pre;z-index:2}
+.scroll-hint{font-size:12px;color:var(--muted);margin-top:6px}
+@media (min-width:780px){.scroll-hint{display:none}}
+
+.caption{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;max-width:76ch}
+.caption pre{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:10px 12px;overflow-x:auto}
+.tip-line{font-size:14px;color:var(--muted);border-left:3px solid var(--lit);padding-left:10px}
+
+section{display:flex;flex-direction:column;gap:14px}
+.sub{color:var(--muted);max-width:70ch}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:960px;background:var(--surface)}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{font-family:var(--f-display);font-size:15px;letter-spacing:.04em;background:var(--surface2)}
+tbody th{font-weight:500;color:var(--muted);white-space:nowrap}
+td code,th code{font-size:12.5px}
+tr:last-child td,tr:last-child th{border-bottom:0}
+td.ocl{font-family:var(--f-mono);font-size:13px;color:var(--accent2)}
+
+pre.code{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;line-height:1.6}
+.cm{color:var(--muted)}
+
+.calc{display:grid;grid-template-columns:minmax(0,240px) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:820px){.calc{grid-template-columns:minmax(0,1fr)}}
+.inputs{display:flex;flex-direction:column;gap:16px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px}
+.inputs label{display:flex;justify-content:space-between;font-size:14px;gap:8px}
+.inputs output{font-family:var(--f-mono);font-size:13px;color:var(--accent)}
+.inputs input[type=range]{width:100%;accent-color:var(--accent)}
+.occ td,.occ th{font-variant-numeric:tabular-nums}
+.occ td{font-family:var(--f-mono);font-size:12.5px}
+.occ td.limit{color:var(--accent);font-weight:600}
+.occ td.limit::after{content:" ◂ 瓶頸";font-family:var(--f-body);font-size:11px;font-weight:500}
+.occ td.soft{font-family:var(--f-body);color:var(--muted);font-size:12.5px}
+.bar{height:8px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:4px;max-width:150px}
+.bar i{display:block;height:100%;background:var(--accent2)}
+.err{color:var(--accent);font-family:var(--f-body)!important}
+.note{font-size:13px;color:var(--muted);max-width:80ch}
+
+dl.facts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px 28px;margin:0}
+@media (max-width:760px){dl.facts{grid-template-columns:minmax(0,1fr)}}
+dl.facts div{border-top:2px solid var(--ink);padding-top:8px;min-width:0}
+dl.facts dt{font-family:var(--f-display);font-weight:700;font-size:18px;margin-bottom:4px}
+dl.facts dd{margin:0;font-size:14.5px}
+.sources{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.sources a{color:var(--accent2)}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">OpenCL → NVIDIA · AMD · PowerVR · Mali 執行模型</span>
+    <h1>從 Work-item 到 SM</h1>
+    <p class="lede">同一個 OpenCL kernel 在四家 GPU 上的叫法都不一樣：NVIDIA 是 thread / warp / SM，AMD 是 work-item / wavefront / CU，PowerVR 是 instance / task / USC，Mali 是 thread / warp / shader core。下面的動畫從 <code>clEnqueueNDRangeKernel</code> 開始，依序畫出切 work-group、派送、切 sub-group、lane 真正執行。切換上方的硬體，可以比較四家的差別。</p>
+  </header>
+
+  <div class="controls">
+    <div class="seg" role="group" aria-label="硬體" id="vendors"></div>
+    <div class="seg steps" role="group" aria-label="步驟" id="steps"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="play">暫停</button>
+      <button class="btn" id="stepbtn">下一拍</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="stage-wrap" id="wrap">
+      <canvas id="stage" aria-label="GPU 執行模型動畫"></canvas>
+      <div id="tip" hidden></div>
+    </div>
+    <p class="scroll-hint">← 畫面可左右滑動 →</p>
+  </div>
+
+  <div class="caption" id="caption" aria-live="polite"></div>
+
+  <section>
+    <h2>名詞對照</h2>
+    <p class="sub">OpenCL 的名稱是抽象層，右邊四欄是它實際對應到的硬體。最重要的是 sub-group 那一列：warp、wavefront、task 都是 SIMT 真正的執行單位，只是四家的寬度從 16 到 128 都有。</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>概念</th><th>OpenCL</th><th>NVIDIA (CUDA)</th><th>AMD（GCN · RDNA）</th><th>PowerVR（Rogue · Volcanic）</th><th>Arm Mali（Valhall）</th></tr></thead>
+        <tbody>
+          <tr><th>整個 kernel 空間</th><td class="ocl">NDRange</td><td>Grid</td><td>NDRange（HIP: Grid）</td><td>NDRange</td><td>NDRange</td></tr>
+          <tr><th>可同步、共用記憶體的一組</th><td class="ocl">work-group</td><td>thread block (CTA)</td><td>work-group</td><td>work-group（Volcanic 文件稱 thread-group）</td><td>work-group</td></tr>
+          <tr><th>鎖步執行的一組</th><td class="ocl">sub-group</td><td>warp = 32</td><td>GCN：wavefront = 64<br>RDNA：wave32（也支援 wave64）</td><td>task<br>Type 1：最多 32 instances<br>Type 2–4：最多 128</td><td>warp = 16<br>Bifrost：G71/G72 = 4，G52/G76 = 8</td></tr>
+          <tr><th>單一執行緒</th><td class="ocl">work-item</td><td>thread</td><td>work-item / lane</td><td>instance</td><td>thread</td></tr>
+          <tr><th>執行核心</th><td class="ocl">Compute Unit</td><td>SM（4 個 SMSP）</td><td>GCN：CU = 4 × SIMD16<br>RDNA：WGP = 2 CU，每 CU 2 × SIMD32</td><td>USC（Unified Shading Cluster）</td><td>shader core<br>G710：2 個 execution engine × 2 個 processing unit</td></tr>
+          <tr><th>最小運算單元</th><td class="ocl">Processing Element</td><td>CUDA core（FP32 lane）</td><td>SIMD lane</td><td>ALU pipe（Type 1：16 / USC）</td><td>processing unit 裡 16-wide FMA 的一條 lane</td></tr>
+          <tr><th>WG 共用記憶體</th><td class="ocl">__local</td><td>shared memory（A100 ≤ 164 KB/SM）</td><td>LDS<br>GCN：64 KB / CU<br>RDNA：128 KB / WGP</td><td>Common Store（文件也叫 local memory store），容量依配置</td><td>沒有專用 on-chip shared memory，走 load/store cache，背後是系統記憶體</td></tr>
+          <tr><th>每 lane 私有</th><td class="ocl">__private</td><td>registers（64K × 32-bit / SM）</td><td>VGPR</td><td>Unified Store<br>Rogue：4 bank × 1280 × 128-bit / USC</td><td>work registers，每 thread 最多 64 × 32-bit</td></tr>
+          <tr><th>整組共用的 uniform 值</th><td class="ocl">（編譯器決定）</td><td>Uniform datapath，UR 暫存器（Turing+）</td><td>SALU + SGPR</td><td>shared registers / Common Store 常數；Volcanic 有 Shared Store（SHS）存 scalar 暫存器</td><td>uniform registers（Mesa Panfrost 稱 FAU）</td></tr>
+          <tr><th>WG 內同步</th><td class="ocl">barrier()</td><td><code>__syncthreads()</code> → <code>BAR.SYNC</code></td><td><code>s_barrier</code></td><td>task 在 barrier 等待時被 FGS 換出，不佔 USC</td><td>barrier()</td></tr>
+          <tr><th>sub-group 內交換資料</th><td class="ocl">sub_group_shuffle / reduce</td><td><code>__shfl_sync</code>, <code>__ballot_sync</code></td><td>DPP, <code>ds_bpermute</code>, <code>ds_swizzle</code></td><td>看 driver 有沒有開 sub-group extension</td><td>看 driver 有沒有開 sub-group extension</td></tr>
+          <tr><th>WG 派送器</th><td class="ocl">（runtime 看不到）</td><td>GigaThread Engine</td><td>Command Processor → ACE → SPI</td><td>Compute Data Master → PDS（配暫存器、載入初始資料）→ USC</td><td>Job Manager（舊款）/ Command Stream Frontend（G710 起）→ thread creator → warp manager</td></tr>
+          <tr><th>sub-group 大小</th><td class="ocl">get_sub_group_size()</td><td>永遠 32</td><td>GCN：64<br>RDNA：32 或 64，看 driver / 編譯選項</td><td>依 core type 而定</td><td>16（Valhall）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>id 怎麼算</h2>
+    <p class="sub">硬體只提供 group id 和 local id，其他 id 都由編譯器算出來。多維 work-group 會先攤平成 linear local id，再依 sub-group 寬度（16、32、64 或 128）切開。</p>
+<pre class="code"><span class="cm">// OpenCL</span>
+size_t gid = get_global_id(0);     <span class="cm">// = get_group_id(0) * get_local_size(0) + get_local_id(0) + global_offset</span>
+uint   sg  = get_sub_group_id();   <span class="cm">// = linear_lid / sub_group_size</span>
+uint   ln  = get_sub_group_local_id(); <span class="cm">// = linear_lid % sub_group_size</span>
+
+<span class="cm">// 2D work-group：linear_lid = lid.x + lid.y * Lx   (+ lid.z * Lx * Ly)</span>
+<span class="cm">// 16×16 的 WG：Mali warp 0 = y 為 0 的一列；NV warp 0 = y 為 0、1 的兩列；AMD wave64 0 = y 為 0..3 的四列</span>
+<span class="cm">// → 讓 x 方向連續存取 global memory，同一個 sub-group 的 load 才會合併 (coalesce)</span>
+
+<span class="cm">// CUDA</span>
+int gid  = blockIdx.x * blockDim.x + threadIdx.x;
+int warp = threadIdx.x / 32, lane = threadIdx.x % 32;
+
+<span class="cm">// HIP on AMD</span>
+int wave = threadIdx.x / warpSize;  <span class="cm">// warpSize = 64 on GCN/CDNA, 通常 32 on RDNA</span>
+
+<span class="cm">// PowerVR：barrier + 非編譯期 local size → 一個 task 只放一個 WG。固定 local size 可避免浪費</span>
+__kernel __attribute__((reqd_work_group_size(128, 1, 1)))
+void k(__global float *in, __global float *out) { ... }</pre>
+  </section>
+
+  <section>
+    <h2>Occupancy：一個核心能同時放幾個 work-group</h2>
+    <p class="sub">第 2、4 步看到的兩種情況（放不下就排隊、沒有別的 sub-group 可以換就閒置）都由這個計算決定。同一組 kernel 參數下，比較 A100、MI50、PowerVR Rogue（Type 1）和 Mali-G710 四顆 GPU。</p>
+    <div class="calc">
+      <div class="inputs">
+        <div><label for="in-L">local size <output id="o-L"></output></label><input type="range" id="in-L" min="32" max="1024" step="32" value="128"></div>
+        <div><label for="in-R">registers / work-item <output id="o-R"></output></label><input type="range" id="in-R" min="8" max="128" step="1" value="32"></div>
+        <div><label for="in-S">local memory / WG <output id="o-S"></output></label><input type="range" id="in-S" min="0" max="65536" step="512" value="4096"></div>
+      </div>
+      <div class="table-wrap" style="min-width:0">
+        <table class="occ" style="min-width:720px">
+          <thead><tr><th></th><th>NVIDIA A100</th><th>AMD MI50</th><th>PowerVR Rogue</th><th>Mali-G710</th></tr></thead>
+          <tbody id="occ-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <p class="note">這是簡化模型，各家假設如下。
+NV 依 sm_80：每 warp 暫存器以 256 為單位配置，每 block 保留 1 KB shared memory，最多 64 warps / 32 blocks。
+AMD 依 GCN：VGPR 以 4 為單位，每 SIMD 最多 10 waves，LDS 以 512 B 為單位，未計 SGPR。
+PowerVR 依 Imagination compute 指南的 Rogue 數字：Unified Store 每 USC 20480 個 32-bit 暫存器；resident task 上限假設 48（文件寫「通常 48 以上」），Common Store 容量依配置所以不列入。
+Mali 依 Arm 規格表：G710 每 core 2048 threads，暫存器超過 32 個減半成 1024，超過 64 個會 spill；local memory 不佔 on-chip 資源，上限依 OpenCL 回報的 32 KB 計。
+真實數字以 driver 和編譯器回報為準。</p>
+  </section>
+
+  <section>
+    <h2>幾個容易踩的底層細節</h2>
+    <dl class="facts">
+      <div><dt>sub-group 寬度不是 OpenCL 保證的</dt><dd>四家分別是 16、32、64、128，不要寫死。用 <code>get_sub_group_size()</code>，或在 host 端查 <code>CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE</code>，local size 取它的倍數。</dd></div>
+      <div><dt>load 不會讓 warp 停下來</dt><dd>停住的是下一條用到結果的指令。NV 靠 scoreboard，AMD 靠編譯器插入的 <code>s_waitcnt vmcnt(N)</code>，PowerVR 是由 FGS 把等資料的 task 換出去。所以編譯器會把 load 往前排，拉開 load 和使用之間的距離。</dd></div>
+      <div><dt>PowerVR：barrier 會影響 task 怎麼包</dt><dd>local size 是 32 的倍數時，task 剛好填滿。local size 是 4、8、16 時，一個 task 可以塞好幾個 WG。但 kernel 有 barrier、local size 又沒在編譯期固定時，一個 task 只會放一個 WG，空著的 instance 直接浪費。解法是用 <code>reqd_work_group_size</code>。</dd></div>
+      <div><dt>Mali：__local 不在 chip 上</dt><dd>Mali 沒有專用的 shared memory，__local 是系統記憶體，經過 load/store cache 存取。在 NV、AMD 上常見的「先搬進 local 再算」tiling 手法，在 Mali 上往往沒有幫助。另外暫存器要壓在 32 個以內，才能跑滿 2048 threads。</dd></div>
+      <div><dt>scalar vs vector 是 divergence analysis 決定的</dt><dd>編譯器能證明某個值在整個 sub-group 都相同，就放進 scalar 暫存器：AMD 用 SGPR，NV 用 UR，PowerVR 用 shared registers。證明不了就只能放在每條 lane 各一份的 vector 暫存器。</dd></div>
+      <div><dt>Independent Thread Scheduling</dt><dd>Volta 之後，NV 每個 thread 有自己的 PC，divergent 路徑可以交錯執行，但同一時刻一個 warp 仍只跑一條路徑。假設 warp 會隱式同步的舊程式碼會壞掉，要改用 <code>__syncwarp</code> 和 <code>*_sync</code> 系列 intrinsics。</dd></div>
+      <div><dt>coalescing 以 sub-group 為單位</dt><dd>一個 warp 讀 32 個連續 float，就是 128 B，等於 4 個 32 B sector；wave64 是 256 B。PowerVR 的 cache line 是 128 B，對應到 64 B 對齊的記憶體區段。lane 的位址越分散，會拆成越多次 transaction。</dd></div>
+      <div><dt>寬度越小，divergence 越便宜</dt><dd>sub-group 越窄，同一組 lane 走不同分支的機率越低。所以 Mali 的 16-wide 對分支多的 kernel 比較寬容，PowerVR Type 2–4 的 128-wide task 則最怕 divergence。RDNA 改回 wave32，也有一部分是這個原因。</dd></div>
+    </dl>
+  </section>
+
+  <section>
+    <h2>資料來源</h2>
+    <div class="sources">
+      <a href="https://docs.imgtec.com/performance-guides/compute-recommendations/html/topics/architecture/rogue/overview.html">Imagination：PowerVR Compute Development Recommendations — Rogue Overview</a>
+      <a href="https://docs.imgtec.com/performance-guides/compute-recommendations/html/topics/architecture/volcanic/overview.html">Imagination：PowerVR Compute Development Recommendations — Volcanic Overview</a>
+      <a href="https://docs.imgtec.com/reference-manuals/powervr-instruction-set-reference/html/topics/core-overview.html">Imagination：PowerVR USC Series 6 Core Overview</a>
+      <a href="https://at-web1.www.anandtech.com/show/7793/imaginations-powervr-rogue-architecture-exposed/4">AnandTech：How Rogues Get Executed</a>
+      <a href="https://documentation-service.arm.com/static/6659a973876c8d213b7870b5">Arm：Mali / Immortalis GPU 規格對照表（2024）</a>
+      <a href="https://at-web1.www.anandtech.com/show/14385/arm-announces-malig77-gpu/2">AnandTech：Introducing Valhall</a>
+      <a href="https://chipsandcheese.com/p/arms-bifrost-architecture-and-the">Chips and Cheese：Arm's Bifrost Architecture and the Mali-G52</a>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const NWG = 8, LSZ = 128, LAT = 10, TICK = 0.45, DIV_TICK = 1.3;
+const V = {
+  nv: { key:'nv', name:'NVIDIA Ampere', cu:'SM', sub:'warp', subs:'warps', W:32, laneN:32, cols:4, ww:170, perRow:1, cadence:1, rrSIMD:false,
+        disp:'GigaThread Engine', localName:'shared memory', laneWord:'lanes',
+        prog:['LDG.E','FFMA','FFMA','FFMA','FFMA','STG.E'], laneLabel:'32 × FP32 lanes',
+        colHead:c=>`SMSP ${c} · warp scheduler`, smNote:'4 SMSP · 64 warp slots · 64K regs', short:'W', mask:'active mask',
+        isa:['LDG.E R2, [R4]','ISETP.NE P0 · BSSY','@P0 FMUL R2, R2, 2','@!P0 FADD R2, R2, 1','BSYNC · STG.E'], select:'<code>FSEL</code>',
+        idNote:'硬體不直接給 global id。編譯器用 <code>S2R SR_CTAID.X</code> 和 <code>S2R SR_TID.X</code> 讀出特殊暫存器，再用一個 <code>IMAD</code> 算出 gid。',
+        cuNote:'Ampere 的 SM 分成 4 個 SMSP。每個 SMSP 有自己的 warp scheduler、16K 個 32-bit 暫存器和 32 條 FP32 lane。warp 進來就綁在一個 SMSP 上（常見配置是 warp id % 4），之後不會搬家。',
+        exec:`<h3>4 · SIMT 執行與 latency hiding</h3>
+<p>每個 cycle，每個 SMSP 的 scheduler 從自己的 warp 裡挑一個 ready 的，issue 一條指令，32 條 lane 同時執行這條指令。</p>
+<p><code>LDG</code> 讀 global memory 要幾百 cycle（這裡縮成 ${LAT}）。scheduler 不會等它，直接換另一個 warp。換 warp 沒有成本，因為每個 warp 的暫存器一直留在 register file 裡。一個 SMSP 的 warp 全都在等資料時，ALU 就會閒著。</p>
+<p class="tip-line">嚴格說，load 本身不會讓 warp 停下，停的是下一條用到結果的指令，由 scoreboard 擋住。</p>`,
+        divNote:'Volta 之後，每個 thread 有自己的 PC（Independent Thread Scheduling），兩條路徑可以交錯排程，但同一時刻一個 warp 還是只跑一條路徑。' },
+  amd:{ key:'amd', name:'AMD GCN', cu:'CU', sub:'wavefront', subs:'waves', W:64, laneN:16, cols:4, ww:170, perRow:1, cadence:4, rrSIMD:true,
+        disp:'Command Processor → SPI', localName:'LDS', laneWord:'lanes',
+        prog:['global_load','v_fma_f32','v_fma_f32','v_fma_f32','v_fma_f32','global_store'], laneLabel:'SIMD16 · 16 lanes',
+        colHead:c=>`SIMD ${c} · 16 lanes`, smNote:'4 × SIMD16 · 40 wave slots · 64 KB LDS', short:'wv', mask:'EXEC',
+        isa:['global_load_dword v1','v_cmp · s_and_saveexec_b64','v_mul_f32 v1, 2.0, v1','s_xor_b64 exec · v_add_f32','s_or_b64 exec · global_store'], select:'<code>v_cndmask_b32</code>',
+        idNote:'硬體不直接給 global id。kernel 啟動時，workgroup id 放在一個 SGPR，local id 放在 <code>v0</code>。編譯器用一個 <code>s_mul_i32</code> 加一個 <code>v_add</code> 算出 gid。',
+        cuNote:'GCN 的 CU 有 4 個 SIMD16，每個 SIMD 有 64 KB 的 VGPR file。wave 分到某個 SIMD 後就固定在那裡，它的 VGPR 也放在那裡。CU 另外有一個 scalar unit 和 SGPR，用來放整個 wave 都相同的值。',
+        exec:`<h3>4 · 4-cycle cadence 與 latency hiding</h3>
+<p>SIMD16 只有 16 條 lane，所以 wave64 的一條指令要 <b>4 個 cycle</b> 才跑完，依序是 lane 0–15、16–31、32–47、48–63（看黃框移動）。4 個 SIMD 輪流拿 issue 機會，每 4 cycle 輪到一次，剛好接上自己的上一條指令。</p>
+<p>這個例子每個 SIMD 只有 1 個 wave（GCN 每個 SIMD 最多可以放 10 個）。<code>global_load</code> 的結果還沒回來時，沒有別的 wave 可以換，SIMD 只能閒著，利用率就掉下來。</p>
+<p class="tip-line">嚴格說，load 本身不會讓 wave 停下，停的是編譯器插在使用前的 <code>s_waitcnt vmcnt(0)</code>。</p>`,
+        divNote:'分支是靠 scalar 指令改 EXEC：<code>s_and_saveexec_b64</code> 存下舊 mask 並進入 then，<code>s_xor_b64</code> 翻成 else，最後 <code>s_or_b64</code> 還原。EXEC 變成 0 時，<code>s_cbranch_execz</code> 可以整段跳過。' },
+  img:{ key:'img', name:'PowerVR Rogue', cu:'USC', sub:'task', subs:'tasks', W:32, laneN:16, cols:1, ww:170, perRow:4, cadence:2, rrSIMD:false,
+        disp:'Compute Data Master → PDS', localName:'Common Store', laneWord:'instances',
+        prog:['ld','fmad','fmad','fmad','fmad','st'], laneLabel:'16 ALU pipes · 一條指令跑 2 cycles',
+        colHead:()=> 'Fine Grained Scheduler · 16 ALU pipes · Unified Store 4 banks', smNote:'16 ALU pipes · ≥48 resident tasks', short:'t', mask:'execution condition',
+        isa:['ld (global)','test · cndst','fmul','cndef · fadd','cndend · st'], select:'test + 條件 mov',
+        idNote:'Compute Data Master 建立 task，PDS 幫每個 instance 配好 Unified Store 暫存器並載入初始資料。kernel 裡同樣由編譯器用乘加算出 gid。',
+        cuNote:'Rogue（Type 1 core）的 USC 有 16 條 ALU pipe，task 最多 32 個 instance。所有 task 由一個 Fine Grained Scheduler 從 resident pool（通常 48 個以上）挑選，沒有像 SMSP / SIMD 那樣分欄。較新的 Type 2–4 core 一個 task 最多 128 個 instance，128 條 ALU pipe 在同一 cycle 執行同一條指令。',
+        exec:`<h3>4 · 2-cycle task 與 latency hiding</h3>
+<p>16 條 ALU pipe 跑 32-instance 的 task：前 16 個 instance 先跑，後 16 個晚一個 cycle（看黃框），所以一條指令佔 2 cycle。</p>
+<p>task 遇到資料相依（等 load 結果、barrier、memory fence）時，FGS 就把它換出去，從 resident pool 換別的 task 進來，切換不花 USC 時間。這裡一個 USC 有 8 個 task 可挑，延遲比 GCN 那種一個 SIMD 只有 1 個 wave 的情況好藏得多。</p>
+<p class="tip-line">指令名稱只是示意。真正的 Rogue ISA 一條指令可以 co-issue 好幾個 ALU 階段，例如 FP32 MAD 加 test 加 mov 在同一 cycle 完成。</p>`,
+        divNote:'PowerVR 對每個 instance 追蹤執行條件：分支時把條件不成立的 instance 設成不執行，兩邊依序跑完再恢復。Mesa 的 PCO 編譯器用 <code>cndst</code> / <code>cndef</code> / <code>cndend</code> 這組條件指令管理（上方 ISA 只是示意）。' },
+  mali:{ key:'mali', name:'Mali-G710', cu:'Shader core', sub:'warp', subs:'warps', W:16, laneN:16, cols:4, ww:72, perRow:2, cadence:1, rrSIMD:false,
+        disp:'Command Stream Frontend → thread creator', localName:'local memory（實際走 cache 和系統記憶體）', laneWord:'lanes',
+        prog:['LOAD.i32','FMA.f32','FMA.f32','FMA.f32','FMA.f32','STORE.i32'], laneLabel:'16-wide FMA',
+        colHead:c=>`EE${c>>1} · processing unit ${c&1}`, smNote:'2 EE × 2 PU · 2048 thr', short:'w', mask:'active threads',
+        isa:['LOAD.i32 r1, …','ICMP · BRANCHZ','FMUL.f32 r1, r1, 2','FADD.f32 r1, r1, 1','reconverge · STORE.i32'], select:'<code>CSEL.f32</code>',
+        idNote:'thread creator 幫每個 warp 建立 thread，硬體提供 local id 和 group id，gid 同樣是編譯器用乘加算出來的。',
+        cuNote:'Mali-G710 的一個 shader core 有 2 個 execution engine，每個 engine 有 2 個 processing unit，每個 processing unit 是 16-wide FMA。warp manager 負責排程這些 16-thread 的 warp。每個 thread 用 ≤32 個暫存器時，一個 core 最多可以駐留 2048 個 thread；用到 33–64 個就減半成 1024。',
+        exec:`<h3>4 · 16-wide warp 與 latency hiding</h3>
+<p>每個 processing unit 每 cycle 執行一個 16-thread warp 的一條指令。warp 窄，所以一個 core 能駐留的 warp 很多（最多 128 個）。warp 等記憶體時，warp manager 就換別的 warp 上來。</p>
+<p>Valhall 把 ALU pipeline 從 Bifrost 的 8 級縮短到 4 級，同一個 warp 連續相依指令之間的空檔也跟著變短。</p>
+<p class="tip-line">公開資料沒有細講 warp 怎麼分配到各個 processing unit。這裡把 warp 固定在某一欄只是示意。</p>`,
+        divNote:'Mali 的 divergence 由硬體管理：硬體追蹤 warp 內每個 thread 是否 active，分支結束後在 reconvergence 點合回來。Mesa Panfrost 的 Valhall 編譯器會在指令上標 reconverge。' }
+};
+const ORDER = ['nv','amd','img','mali'];
+const HUE = [205, 24, 150, 322, 262, 86, 186, 352];
+const SCENES = ['NDRange','派送','切 sub-group','執行','Divergence'];
+
+const cv = document.getElementById('stage'), ctx = cv.getContext('2d');
+const LW = 960, LH = 560;
+function resize(){ const d = Math.min(2, window.devicePixelRatio || 1); cv.width = LW*d; cv.height = LH*d; ctx.setTransform(d,0,0,d,0,0); }
+resize(); addEventListener('resize', resize);
+
+let tok = {};
+function readTok(){
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ['bg','surface','surface2','ink','muted','line','accent','accent2','lit','good','wgL','wgS']) tok[k] = cs.getPropertyValue('--'+k).trim();
+}
+readTok();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTok);
+new MutationObserver(readTok).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
+const wg = (i,a=1) => `hsla(${HUE[i]},${tok.wgS},${tok.wgL},${a})`;
+
+const st = { vendor:'nv', scene:1, playing:!reduce, t:0, hover:-1 };
+let sim, div;
+
+function initSim(){
+  const v = V[st.vendor], per = LSZ / v.W, n = per*2, warps = [];
+  for (let k=0;k<n;k++) warps.push({ k, wg: k<per?0:3, sub:k%per, col:k%v.cols, idx:Math.floor(k/v.cols), pc:(k*2)%v.prog.length, stallUntil:0 });
+  sim = { warps, T:-1, acc:0, cols:Array.from({length:v.cols}, ()=>({rr:0,state:'idle',cur:null,start:0,busyUntil:0,busy:0,slots:0,why:''})) };
+  div = { T:0, acc:0 };
+}
+const isLoad = s => /LDG|load|LOAD|^ld/.test(s);
+function step(){
+  const v = V[st.vendor]; sim.T++; const T = sim.T;
+  sim.cols.forEach((col,c)=>{
+    const ws = sim.warps.filter(w=>w.col===c);
+    col.slots++;
+    if (T < col.busyUntil){ col.state='busy'; col.busy++; return; }
+    if (v.rrSIMD && T%4 !== c){ col.state='idle'; col.cur=null; col.why='等輪到這個 SIMD issue'; return; }
+    let pick=null;
+    for (let i=0;i<ws.length;i++){ const w = ws[(col.rr+i)%ws.length]; if (w.stallUntil<=T){ pick=w; col.rr=(col.rr+i+1)%ws.length; break; } }
+    if (!pick){ col.state='idle'; col.cur=null; col.why='idle：全部在等記憶體'; return; }
+    const instr = v.prog[pick.pc]; pick.pc = (pick.pc+1)%v.prog.length;
+    pick.stallUntil = T + v.cadence + (isLoad(instr) ? LAT : 0);
+    col.state='issue'; col.cur={w:pick, instr}; col.start=T; col.busyUntil=T+v.cadence; col.busy++;
+  });
+}
+
+// ---------- drawing helpers ----------
+function font(size, kind='mono', w=400){ ctx.font = `${w} ${size}px ${kind==='mono' ? '"JetBrains Mono",monospace' : '"Barlow Condensed","Noto Sans TC",sans-serif'}`; }
+function text(s,x,y,o={}){ font(o.size||11, o.kind||'mono', o.w||400); ctx.fillStyle=o.c||tok.ink; ctx.textAlign=o.align||'left'; ctx.textBaseline='alphabetic'; ctx.fillText(s,x,y); }
+function rr(x,y,w,h,r){ ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x,y,w,h,r) : ctx.rect(x,y,w,h); }
+function panel(x,y,w,h,focus){ rr(x,y,w,h,8); ctx.fillStyle=tok.surface; ctx.fill(); ctx.lineWidth=focus?2:1; ctx.strokeStyle=focus?tok.accent:tok.line; ctx.stroke(); }
+const clamp = (x,a=0,b=1)=>Math.max(a,Math.min(b,x));
+const ease = p => p<.5 ? 2*p*p : 1-Math.pow(-2*p+2,2)/2;
+const lerp = (a,b,p)=>({x:a.x+(b.x-a.x)*p, y:a.y+(b.y-a.y)*p, w:a.w+(b.w-a.w)*p, h:a.h+(b.h-a.h)*p});
+
+const GX=64, GY=38, GW=840, CW=GW/LSZ, RP=12, RH=9;
+const rowRect = r => ({x:GX, y:GY+r*RP, w:GW, h:RH});
+const smX = j => 56 + j*290;
+const slotRect = (cu,s) => ({x:smX(cu)+12, y:220+s*30, w:244, h:20});
+
+// ---------- NDRange ----------
+function drawGrid(v){
+  panel(16,8,928,146,st.scene===1);
+  const hl = st.scene===1 ? Math.floor(st.t/0.9)%NWG : -1;
+  text('NDRange · global size 1024 · local size 128 → 8 work-groups', 32, 27, {size:15, kind:'d', w:600});
+  if (hl>=0) text(`WG${hl}：global id ${hl*128} … ${hl*128+127} = ${hl} × 128 + local id`, 928, 27, {align:'right', c:tok.accent, size:11.5});
+  else text(`深淺交替 = 每 ${v.W} 個 work-item 一個 ${v.sub}`, 928, 27, {align:'right', c:tok.muted});
+  for (let r=0;r<NWG;r++){
+    const y = GY + r*RP;
+    text(`WG${r}`, 30, y+8, {c: r===hl ? tok.accent : tok.muted, size:10.5, w: r===hl?600:400});
+    for (let c=0;c<LSZ;c++){
+      let a = Math.floor(c/v.W)%2 ? .6 : 1;
+      if (hl>=0 && r!==hl) a *= .3;
+      ctx.fillStyle = wg(r,a); ctx.fillRect(GX+c*CW, y, CW-.9, RH);
+    }
+  }
+  const yb = GY + NWG*RP, tickStep = Math.max(v.W, 32);
+  ctx.strokeStyle = tok.muted; ctx.lineWidth=1;
+  for (let s=0;s<LSZ;s+=v.W){
+    const x = GX + s*CW; ctx.beginPath(); ctx.moveTo(x+.5,yb-1); ctx.lineTo(x+.5,yb+4); ctx.stroke();
+    if (s % tickStep === 0) text(`lid ${s}`, x+2, yb+13, {c:tok.muted, size:9.5});
+  }
+  if (st.hover>=0){
+    const r = Math.floor(st.hover/LSZ), c = st.hover%LSZ;
+    ctx.strokeStyle = tok.ink; ctx.lineWidth=2; ctx.strokeRect(GX+c*CW-1, GY+r*RP-1.5, CW+1, RH+3);
+  }
+}
+
+// ---------- GPU / dispatch ----------
+function dispatchState(t){
+  const out = [];
+  for (let i=0;i<NWG;i++) out.push({mode:'queue'});
+  if (st.scene===1) return out;
+  if (st.scene>=3){ for (let i=0;i<6;i++) out[i]={mode:'res', slot:[i%3,Math.floor(i/3)]}; return out; }
+  const tt = t % 10;
+  for (let i=0;i<6;i++){
+    const s0 = .4 + i*.4, p = clamp((tt-s0)/.7);
+    out[i] = p<=0 ? {mode:'queue'} : p<1 ? {mode:'fly', p, slot:[i%3,Math.floor(i/3)]} : {mode:'res', slot:[i%3,Math.floor(i/3)]};
+  }
+  const done = (i, at) => { if (tt>=at){ out[i] = {mode:'done', a: 1-clamp((tt-at)/.5), slot:out[i].slot}; } };
+  done(0, 5.0); done(1, 6.4);
+  const fly2 = (i, at, slot) => { const p = clamp((tt-at)/.7); if (p>0) out[i] = p<1 ? {mode:'fly', p, slot} : {mode:'res', slot}; };
+  fly2(6, 5.5, [0,0]); fly2(7, 6.9, [1,0]);
+  return out;
+}
+function drawSlotBar(i, r, v, alpha=1, label=true){
+  rr(r.x, r.y, r.w, r.h, 3); ctx.fillStyle = wg(i, .9*alpha); ctx.fill();
+  const per = LSZ/v.W; ctx.strokeStyle = tok.surface; ctx.lineWidth = 1.5;
+  for (let s=1;s<per;s++){ const x = r.x + r.w*s/per; ctx.beginPath(); ctx.moveTo(x, r.y+2); ctx.lineTo(x, r.y+r.h-2); ctx.stroke(); }
+  if (label && r.h>=14){
+    const s = `WG${i} · ${per} ${v.subs}`; font(11,'mono',600);
+    const w = ctx.measureText(s).width + 10;
+    rr(r.x+4, r.y+3, w, r.h-6, 2); ctx.fillStyle = wg(i, alpha); ctx.fill();
+    text(s, r.x+9, r.y+r.h/2+4, {c: tok.bg, size:11, w:600});
+  }
+}
+function drawGPU(v){
+  panel(16,162,928,140,st.scene===2);
+  text(v.disp, 32, 183, {size:15, kind:'d', w:600});
+  const ds = dispatchState(st.t);
+  const q = ds.map((d,i)=>d.mode==='queue'?i:-1).filter(i=>i>=0);
+  text('queue', 928 - q.length*36 - 8, 182, {align:'right', c:tok.muted, size:10.5});
+  q.forEach((i,k)=>{ const x = 928 - (q.length-k)*36; rr(x,170,32,16,3); ctx.fillStyle=wg(i,.9); ctx.fill(); text(`WG${i}`, x+16, 182, {align:'center', c:tok.bg, size:9.5, w:600}); });
+  for (let j=0;j<3;j++){
+    const x = smX(j); rr(x,192,268,102,6); ctx.fillStyle = tok.surface2; ctx.fill();
+    if (j===0 && st.scene>=3){ ctx.strokeStyle = tok.accent; ctx.lineWidth = 1.5; ctx.stroke(); }
+    text(`${v.key==='mali' ? 'Core' : v.cu} ${j}`, x+12, 210, {size:15, kind:'d', w:700});
+    text(v.smNote, x+256, 210, {align:'right', c:tok.muted, size:9.5});
+    for (let s=0;s<2;s++){ const r = slotRect(j,s); ctx.setLineDash([4,3]); ctx.strokeStyle = tok.line; ctx.lineWidth=1; ctx.strokeRect(r.x+.5,r.y+.5,r.w-1,r.h-1); ctx.setLineDash([]); }
+  }
+  ds.forEach((d,i)=>{
+    if (d.mode==='res') drawSlotBar(i, slotRect(...d.slot), v);
+    else if (d.mode==='done'){ const r = slotRect(...d.slot); drawSlotBar(i, r, v, d.a, false); text(`WG${i} 完成 ✓`, r.x+8, r.y+14, {c:tok.good, size:11, w:600}); }
+    else if (d.mode==='fly'){ const r = lerp(rowRect(i), slotRect(...d.slot), ease(d.p)); drawSlotBar(i, r, v, 1, d.p>.7); }
+  });
+  if (st.scene===2) text('規則：一個 work-group 整組放進同一個 ' + v.cu, 32, 297, {c:tok.accent, size:10.5});
+}
+
+// ---------- zoom ----------
+const ZB = {x:150, y0:342, cw:5.6};
+const pitch = v => 864 / v.cols;
+const colX = (v,c) => 56 + c*pitch(v);
+const colW = v => pitch(v) - 16;
+function warpRect(v,w){
+  const x = colX(v,w.col) + 30 + (w.idx % v.perRow) * (v.ww + 28);
+  const y = 404 + Math.floor(w.idx / v.perRow) * 34;
+  return {x, y, w:v.ww, h: v.W===64 ? 24 : 12};
+}
+function srcRect(v,w){ const bar = w.wg===0?0:1; return {x:ZB.x + w.sub*v.W*ZB.cw, y:ZB.y0+bar*14, w:v.W*ZB.cw, h:9}; }
+
+function drawWarp(v, w, r, opt={}){
+  const a = opt.alpha ?? 1, per = Math.min(v.W, 32), rows = Math.ceil(v.W/32);
+  const cw = r.w/per, h = rows>1 ? (r.h-2)/2 : r.h;
+  for (let i=0;i<v.W;i++){ const row = Math.floor(i/32), cc = i%32; ctx.fillStyle = wg(w.wg, a); ctx.fillRect(r.x+cc*cw, r.y+row*(h+2), cw-.8, h); }
+  if (opt.phase!=null){
+    const s0 = opt.phase*v.laneN, row = Math.floor(s0/32), c0 = s0%32;
+    ctx.strokeStyle = tok.lit; ctx.lineWidth = 2.2; ctx.strokeRect(r.x+c0*cw-1, r.y+row*(h+2)-1.5, v.laneN*cw+1, h+3);
+  }
+  if (opt.issue){ ctx.strokeStyle = tok.ink; ctx.lineWidth = 1.8; ctx.strokeRect(r.x-2, r.y-2, r.w+3, r.h+4); }
+  text(`${v.short}${w.k}`, r.x-5, r.y + Math.min(r.h,12) - 2, {align:'right', c:tok.muted, size:10});
+}
+
+function drawZoom(v){
+  panel(16,310,928,244, st.scene>=3);
+  ctx.setLineDash([3,3]); ctx.strokeStyle = st.scene>=3 ? tok.accent : tok.line; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(smX(0)+134, 294); ctx.lineTo(smX(0)+134, 310); ctx.stroke(); ctx.setLineDash([]);
+  if (st.scene<=2){
+    text(`${v.cu} 0 內部 — 從第 3 步開始放大`, 480, 436, {align:'center', c:tok.muted, size:15, kind:'d', w:600});
+    return;
+  }
+  if (st.scene===5) return drawDiv(v);
+  const per = LSZ/v.W, tt = st.t, CWd = colW(v);
+  text(`${v.cu} 0 內部 · WG0 + WG3 = ${per*2} ${v.subs}`, 32, 331, {size:15, kind:'d', w:600});
+  if (st.scene===4){
+    text(`cycle ${Math.max(0,sim.T)}`, 928, 331, {align:'right', size:13, w:600, c:tok.accent});
+    text(`global load 延遲縮成 ${LAT} cycles 示意`, 840, 331, {align:'right', size:10, c:tok.muted});
+  }
+  const appear = w => clamp((tt-(0.6+w.k*(2.4/sim.warps.length)))/0.8);
+  [0,3].forEach((g,bi)=>{
+    const y = ZB.y0 + bi*14; text(`WG${g}`, ZB.x-8, y+8, {align:'right', c:tok.muted, size:10});
+    for (let s=0;s<per;s++){
+      const w = sim.warps.find(w=>w.wg===g && w.sub===s);
+      const p = st.scene===3 ? appear(w) : 1;
+      const r = srcRect(v,w);
+      for (let i=0;i<v.W;i++){ ctx.fillStyle = wg(g, p<=0 ? (s%2?.6:1) : .22); ctx.fillRect(r.x+i*ZB.cw, r.y, ZB.cw-.8, 9); }
+    }
+  });
+  const f = clamp(sim.acc/TICK);
+  for (let c=0;c<v.cols;c++){
+    const x = colX(v,c), col = sim.cols[c];
+    rr(x,374,CWd,20,4); ctx.fillStyle = tok.surface2; ctx.fill();
+    text(v.colHead(c), x+8, 388, {size:10.5, w:600});
+    const lanesY = 478, laneW = Math.min(CWd-30, v.laneN*20), lw = laneW/v.laneN;
+    text('ALU', x+24, lanesY+13, {align:'right', c:tok.muted, size:10});
+    const active = st.scene===4 && (col.state==='issue' || col.state==='busy') && col.cur;
+    for (let i=0;i<v.laneN;i++){
+      const lx = x+30+i*lw;
+      if (active){ ctx.fillStyle = wg(col.cur.w.wg, 1-.45*f); ctx.fillRect(lx, lanesY, lw-1, 18); }
+      ctx.strokeStyle = tok.line; ctx.lineWidth=1; ctx.strokeRect(lx+.5, lanesY+.5, lw-2, 17);
+    }
+    text(v.laneLabel, x+30, lanesY+31, {c:tok.muted, size:9.5});
+    if (st.scene===4){
+      let line, lc = tok.ink;
+      if (active){
+        const ph = sim.T - col.start;
+        line = v.cadence>1 ? `${v.short}${col.cur.w.k} ${col.cur.instr} · ${v.laneWord} ${ph*v.laneN}–${ph*v.laneN+v.laneN-1}` : `issue ${v.short}${col.cur.w.k}  ${col.cur.instr}`;
+      } else if (sim.T>=0){ line = col.why; lc = tok.accent; }
+      if (line) text(line, x+2, 524, {size:10, c:lc, w:600});
+      const u = col.slots ? col.busy/col.slots : 0;
+      rr(x+2, 534, 100, 6, 3); ctx.fillStyle = tok.surface2; ctx.fill();
+      rr(x+2, 534, 100*u, 6, 3); ctx.fillStyle = tok.accent2; ctx.fill();
+      text(`ALU 利用率 ${Math.round(u*100)}%`, x+110, 541, {size:9.5, c:tok.muted});
+    }
+  }
+  sim.warps.forEach(w=>{
+    const tgt = warpRect(v,w);
+    if (st.scene===3){
+      const p = appear(w);
+      if (p<=0) return;
+      if (p<1){ const r = lerp(srcRect(v,w), tgt, ease(p)); rr(r.x,r.y,r.w,r.h,2); ctx.fillStyle = wg(w.wg); ctx.fill(); return; }
+      drawWarp(v,w,tgt);
+      text(`WG${w.wg}·sg${w.sub}`, tgt.x, tgt.y+tgt.h+11, {size:9.5, c:tok.muted});
+      return;
+    }
+    const col = sim.cols[w.col];
+    const mine = col.cur && col.cur.w===w && (col.state==='issue'||col.state==='busy');
+    const stalled = w.stallUntil > sim.T + 1 && !mine;
+    drawWarp(v,w,tgt,{alpha: stalled ? .35 : 1, issue: mine, phase: mine && v.cadence>1 ? sim.T-col.start : null});
+    let s, c = tok.muted;
+    if (mine){ s = col.cur.instr; c = tok.ink; }
+    else if (stalled){ s = `STALL ${w.stallUntil-sim.T-1}`; }
+    else s = 'READY';
+    text(s, tgt.x, tgt.y+tgt.h+11, {size:9.5, c, w: mine?600:400});
+  });
+}
+
+// ---------- divergence ----------
+const CODE = ['float x = in[gid];','if (lid % 2 == 0)','    x = x * 2.0f;','else  x = x + 1.0f;','out[gid] = x;'];
+const MASK = { all:i=>true, even:i=>i%2===0, odd:i=>i%2===1 };
+const LINEMASK = ['all','all','even','odd','all'];
+function hexMask(m, n){ return '0x' + (m==='all' ? 'F'.repeat(n/4) : m==='even' ? '5'.repeat(n/4) : 'A'.repeat(n/4)); }
+function drawDiv(v){
+  const line = div.T % 5, m = LINEMASK[line];
+  text(`一個 ${v.sub}（${v.W} lanes）遇到 if / else`, 32, 331, {size:15, kind:'d', w:600});
+  CODE.forEach((s,i)=>{
+    const y = 362 + i*26;
+    if (i===line){ rr(44,y-15,370,22,4); ctx.fillStyle = tok.surface2; ctx.fill(); text('▶', 50, y, {c:tok.accent, size:11}); }
+    text(s, 66, y, {size:12, w: i===line?600:400, c: i===line?tok.ink:tok.muted});
+    text(v.isa[i], 232, y, {size:9.5, c: i===line?tok.accent2:tok.muted});
+  });
+  const x0 = 430, cw = 15, rows = Math.ceil(v.W/32), per = Math.min(v.W,32);
+  for (let i=0;i<v.W;i++){
+    const r = Math.floor(i/32), c = i%32, y = 350 + r*(rows>1?30:0), h = rows>1 ? 24 : 34;
+    const on = MASK[m](i);
+    ctx.fillStyle = on ? wg(0) : tok.surface2; ctx.fillRect(x0+c*cw, y, cw-2, h);
+    if (!on){ ctx.strokeStyle = tok.line; ctx.lineWidth=1; ctx.strokeRect(x0+c*cw+.5, y+.5, cw-3, h-1); }
+  }
+  const yl = rows>1 ? 418 : 400;
+  for (let c=0;c<per;c+=8) text(String(c), x0+c*cw, yl, {size:9, c:tok.muted});
+  if (rows>1) text('上排 lane 0–31，下排 32–63', 900, yl, {align:'right', size:9, c:tok.muted});
+  text(`${v.mask} = ${hexMask(m, v.W)}`, x0, 446, {size:12, w:600, c:tok.ink});
+  const passTxt = line===2 ? '第 1 趟：只有偶數 lane 寫回結果' : line===3 ? '第 2 趟：只有奇數 lane 寫回結果' : '全部 lane active';
+  text(passTxt, x0, 470, {size:14, kind:'d', w:600, c: (line===2||line===3) ? tok.accent : tok.muted});
+  rr(x0, 486, 470, 50, 6); ctx.fillStyle = tok.surface2; ctx.fill();
+  text('if / else 這段花 2 趟，每趟只有一半 lane 有用', x0+12, 506, {size:11.5, w:600});
+  text(`SIMD 效率 = ${v.W/2} × 2 / (${v.W} × 2) = 50%`, x0+12, 525, {size:11, c:tok.accent2});
+}
+
+// ---------- main ----------
+function draw(){
+  const v = V[st.vendor];
+  ctx.fillStyle = tok.bg; ctx.fillRect(0,0,LW,LH);
+  drawGrid(v); drawGPU(v); drawZoom(v);
+}
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(.1,(now-last)/1000); last = now;
+  if (st.playing){
+    st.t += dt;
+    if (st.scene===4){ sim.acc += dt; while (sim.acc>=TICK){ sim.acc-=TICK; step(); } }
+    if (st.scene===5){ div.acc += dt; while (div.acc>=DIV_TICK){ div.acc-=DIV_TICK; div.T++; } }
+  }
+  draw(); requestAnimationFrame(frame);
+}
+
+// ---------- captions ----------
+const CAP = {
+1: v => `<h3>1 · NDRange 切成 work-group</h3>
+<p><code>clEnqueueNDRangeKernel(global = 1024, local = 128)</code> 會讓 runtime 切出 1024 / 128 = <b>8 個 work-group</b>。每個 work-item 的身分只靠三個數字決定：group id、local id、local size。</p>
+<pre>gid = group_id × local_size + local_id      // 例：517 = 4 × 128 + 5</pre>
+<p>${v.idNote}</p>
+<p class="tip-line">滑鼠移到格子上，可以看任一個 work-item 的 id 怎麼拆。</p>`,
+2: v => `<h3>2 · work-group 整組派送到 ${v.cu}</h3>
+<p>${v.disp} 把 work-group 一個一個丟給有空位的 ${v.cu}。規則只有一條：<b>同一個 work-group 一定整組待在同一個 ${v.cu}</b>，因為組內要共用 ${v.localName} 和 barrier。</p>
+<p>一個 ${v.cu} 能同時放幾個 WG，取決於 sub-group slots、registers、local memory 這些資源（算法見下方 occupancy）。這裡示意每個 ${v.cu} 放 2 個，WG6、WG7 在 queue 裡等，WG0、WG1 做完才補進去。</p>
+<p class="tip-line">WG 之間沒有執行順序，也不能互相等待，所以 OpenCL 的 barrier 只在 work-group 內有效。</p>`,
+3: v => `<h3>3 · work-group 切成 ${v.sub}（sub-group）</h3>
+<p>WG 進到 ${v.cu} 後，依 linear local id 每 ${v.W} 個切成一個 ${v.sub}，也就是 OpenCL 的 <b>sub-group</b>。128 / ${v.W} = ${LSZ/v.W} 個 ${v.subs}，兩個 WG 共 ${LSZ/v.W*2} 個。</p>
+<p>${v.cuNote}</p>
+<p class="tip-line">local size 不是 ${v.W} 的倍數時，最後一個 ${v.sub} 會有部分 lane 永遠被 mask 掉，那些 ALU 等於空轉。</p>`,
+4: v => v.exec,
+5: v => `<h3>5 · Divergence：一個 ${v.sub}，兩條路</h3>
+<p>同一個 ${v.sub} 的 lane 共用一條指令流。條件不一致時，兩邊都要跑，再用 ${v.mask} 關掉不該寫回的 lane。<code>lid % 2</code> 讓這段的效率剛好掉一半。</p>
+<p>${v.divNote}</p>
+<p>如果把條件改成以 sub-group 為單位，例如 <code>(lid / ${v.W}) % 2</code>，整個 ${v.sub} 會走同一邊，就沒有 divergence。</p>
+<p class="tip-line">這麼短的分支，真實編譯器多半直接改成 select（${v.select}）：兩邊都算，不分支。這裡保留分支只是為了示意。</p>`
+};
+
+// ---------- UI ----------
+const vendorsEl = document.getElementById('vendors'), stepsEl = document.getElementById('steps');
+ORDER.forEach(k=>{ const b = document.createElement('button'); b.id='v-'+k; b.textContent = V[k].name; b.onclick=()=>setVendor(k); vendorsEl.appendChild(b); });
+SCENES.forEach((n,i)=>{ const b = document.createElement('button'); b.id='sc-'+(i+1); b.innerHTML = `<span class="n">${i+1}</span>${n}`; b.onclick=()=>setScene(i+1); stepsEl.appendChild(b); });
+function sync(){
+  SCENES.forEach((_,i)=>document.getElementById('sc-'+(i+1)).setAttribute('aria-pressed', String(st.scene===i+1)));
+  ORDER.forEach(k=>document.getElementById('v-'+k).setAttribute('aria-pressed', String(st.vendor===k)));
+  document.getElementById('play').textContent = st.playing ? '暫停' : '播放';
+  document.getElementById('caption').innerHTML = CAP[st.scene](V[st.vendor]);
+}
+function setScene(n){ st.scene = n; st.t = 0; initSim(); if (n===4 && !st.playing) step(); sync(); }
+function setVendor(k){ st.vendor = k; st.t = 0; initSim(); if (st.scene===4 && !st.playing) step(); sync(); }
+document.getElementById('play').onclick = ()=>{ st.playing = !st.playing; sync(); };
+document.getElementById('stepbtn').onclick = ()=>{
+  if (st.scene===4) step(); else if (st.scene===5) div.T++; else st.t += 0.9;
+};
+
+const wrap = document.getElementById('wrap'), tip = document.getElementById('tip');
+cv.addEventListener('mousemove', e=>{
+  const rc = cv.getBoundingClientRect(), x = (e.clientX-rc.left)/rc.width*LW, y = (e.clientY-rc.top)/rc.height*LH;
+  if (x>=GX && x<GX+GW && y>=GY && y<GY+NWG*RP){
+    const r = Math.floor((y-GY)/RP), c = Math.floor((x-GX)/CW), v = V[st.vendor];
+    st.hover = r*LSZ + c;
+    const where = r<6 ? `${v.cu} ${r%3}` : `排隊，之後進 ${v.cu} ${r===6?0:1}`;
+    tip.textContent = `global id ${r*LSZ+c}\n= group ${r} × 128 + local ${c}\n${v.sub} ${Math.floor(c/v.W)} · lane ${c%v.W}\n此例派到 ${where}`;
+    tip.hidden = false;
+    const wr = wrap.getBoundingClientRect();
+    let tx = e.clientX - wr.left + wrap.scrollLeft + 14; const ty = e.clientY - wr.top + 14;
+    if (tx + 220 > wrap.scrollLeft + wr.width) tx -= 240;
+    tip.style.left = tx+'px'; tip.style.top = ty+'px';
+  } else { st.hover = -1; tip.hidden = true; }
+});
+cv.addEventListener('mouseleave', ()=>{ st.hover=-1; tip.hidden = true; });
+
+// ---------- occupancy ----------
+const inL = document.getElementById('in-L'), inR = document.getElementById('in-R'), inS = document.getElementById('in-S');
+function occNV(T,R,S){
+  if (R>255) return {err:'超過 255 個暫存器，編譯器會 spill 到 local memory'};
+  if (S>166912) return {err:'shared memory 超過每 block 163 KB 上限'};
+  const wpb = Math.ceil(T/32), rpw = Math.ceil(R*32/256)*256;
+  return {split:`${wpb} warps`, regs:`${rpw} regs / warp`, byW:Math.floor(64/wpb), byR:Math.floor(Math.floor(65536/rpw)/wpb),
+    byS:Math.floor(167936/(Math.ceil(S/128)*128 + 1024)), byB:32, per:wpb, max:64, unit:'warps'};
+}
+function occAMD(T,R,S){
+  if (S>65536) return {err:'LDS 超過每 CU 64 KB'};
+  const wpw = Math.ceil(T/64), vg = Math.ceil(R/4)*4, wps = Math.min(10, Math.floor(256/vg));
+  const lds = S>0 ? Math.ceil(S/512)*512 : 0;
+  return {split:`${wpw} waves`, regs:`${vg} VGPR → 每 SIMD ${wps} waves`, byW:Math.floor(40/wpw), byR:Math.floor(wps*4/wpw),
+    byS: lds ? Math.floor(65536/lds) : Infinity, byB:16, per:wpw, max:40, unit:'waves'};
+}
+function occIMG(T,R,S){
+  const tpw = Math.ceil(T/32), inst = Math.floor(20480/R);
+  return {split:`${tpw} tasks`, regs:`${R} × 32-bit → 最多 ${inst} instances`, byW:Math.floor(48/tpw), byR:Math.floor(Math.floor(inst/32)/tpw),
+    byS:Infinity, sNote:'依配置', byB:Infinity, per:tpw, max:48, unit:'tasks'};
+}
+function occMali(T,R,S){
+  if (R>64) return {err:'超過 64 個 work register，會 spill'};
+  if (S>32768) return {err:'超過 OpenCL 回報的 32 KB local memory'};
+  const wpw = Math.ceil(T/16), cap = R<=32 ? 2048 : 1024;
+  return {split:`${wpw} warps`, regs:`${R<=32?'≤ 32':'33–64'} regs → ${cap} threads`, byW:Math.floor(128/wpw), byR:Math.floor(cap/16/wpw),
+    byS:Infinity, sNote:'不佔 on-chip 資源', byB:Infinity, per:wpw, max:128, unit:'warps'};
+}
+function renderOcc(){
+  const T = +inL.value, R = +inR.value, S = +inS.value;
+  document.getElementById('o-L').textContent = T;
+  document.getElementById('o-R').textContent = R;
+  document.getElementById('o-S').textContent = S>=1024 ? (S/1024).toFixed(S%1024?1:0)+' KB' : S+' B';
+  const res = [occNV, occAMD, occIMG, occMali].map(f=>{ const o = f(T,R,S); if (!o.err) o.act = Math.min(o.byW,o.byR,o.byS,o.byB); return o; });
+  const cell = (o,k,suffix) => {
+    if (o.err) return '<td>—</td>';
+    if (o[k]===Infinity) return `<td class="soft">${k==='byS' ? (o.sNote||'不受限') : '未設上限'}</td>`;
+    const lim = ['byW','byR','byS','byB'].includes(k) && o[k]===o.act;
+    return `<td class="${lim?'limit':''}">${o[k]}${suffix||''}</td>`;
+  };
+  const rows = [['每個 WG 切成','split'],['暫存器配置','regs'],['上限：sub-group slots','byW',' WG'],['上限：registers','byR',' WG'],['上限：local memory','byS',' WG'],['上限：WG 數量','byB',' WG']];
+  let h = rows.map(([l,k,s])=>`<tr><th>${l}</th>${res.map(o=>cell(o,k,s)).join('')}</tr>`).join('');
+  const fin = o => {
+    if (o.err) return `<td class="err">${o.err}</td>`;
+    if (o.act<=0) return `<td class="err">連一個 WG 都放不下</td>`;
+    const occ = o.act*o.per/o.max;
+    return `<td><b>${o.act} WG = ${o.act*o.per} / ${o.max}</b> ${o.unit}<div class="bar"><i style="width:${Math.round(occ*100)}%"></i></div>${Math.round(occ*100)}% occupancy</td>`;
+  };
+  h += `<tr><th>同時駐留</th>${res.map(fin).join('')}</tr>`;
+  document.getElementById('occ-body').innerHTML = h;
+}
+[inL,inR,inS].forEach(i=>i.addEventListener('input', renderOcc));
+
+initSim(); sync(); renderOcc();
+requestAnimationFrame(frame);
+})();
+</script>
