@@ -1,0 +1,534 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>SIMT 分支機制</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* Layout: datasheet column — intro, a stepping debugger (source+ISA left, lane/register state right), then comparison tables and code */
+:root{
+  --bg:#eceee9; --surface:#f7f8f4; --surface2:#e1e4dc; --ink:#15181c; --muted:#596067; --line:#c4c9c0;
+  --accent:#ad4c1b; --accent2:#2b5f91; --lit:#d9961c; --good:#2f7a4c;
+  --on:#2b5f91; --onInk:#f7f8f4;
+  --f-display:"Barlow Condensed","Noto Sans TC",sans-serif;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1216; --surface:#161a20; --surface2:#1f242c; --ink:#e2e5e0; --muted:#939aa2; --line:#2d333c;
+    --accent:#e8844d; --accent2:#83b4e3; --lit:#ffcf6e; --good:#6cc18e; --on:#4f8fcf; --onInk:#0f1216; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1216; --surface:#161a20; --surface2:#1f242c; --ink:#e2e5e0; --muted:#939aa2; --line:#2d333c;
+  --accent:#e8844d; --accent2:#83b4e3; --lit:#ffcf6e; --good:#6cc18e; --on:#4f8fcf; --onInk:#0f1216; color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--ink)}
+body{font-family:var(--f-body);font-size:15px;line-height:1.7;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 64px}
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:30px}
+h1,h2,h3{font-family:var(--f-display);font-weight:700;line-height:1.15;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,54px)}
+h2{font-size:28px}
+h3{font-size:20px}
+p{margin:0}
+code,pre{font-family:var(--f-mono);font-size:.86em}
+code{background:var(--surface2);padding:1px 5px;border-radius:3px}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.lede{max-width:70ch;color:var(--muted)}
+header{display:flex;flex-direction:column;gap:8px}
+section{display:flex;flex-direction:column;gap:14px}
+.sub{color:var(--muted);max-width:72ch}
+
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+@media (max-width:760px){.three{grid-template-columns:minmax(0,1fr)}}
+.three div{border-top:2px solid var(--ink);padding-top:8px}
+.three b{font-family:var(--f-display);font-size:18px;display:block;margin-bottom:2px}
+.three p{font-size:14.5px}
+
+/* controls */
+.controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--surface)}
+.seg button,.btn{font:600 14px var(--f-display);letter-spacing:.04em;color:var(--ink);background:transparent;border:0;padding:7px 13px;cursor:pointer}
+.seg button + button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.btn{border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.btn:hover,.seg button:hover{color:var(--accent)}
+.seg button[aria-pressed="true"]:hover{color:var(--bg)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.stepno{font-family:var(--f-mono);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+input[type=range]{accent-color:var(--accent);width:160px}
+
+/* debugger */
+.dbg{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:860px){.dbg{grid-template-columns:minmax(0,1fr)}}
+.pane{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.pane h3{font-size:16px;letter-spacing:.04em;color:var(--muted)}
+.listing{font-family:var(--f-mono);font-size:12.5px;line-height:1.55;overflow-x:auto;margin:0;padding:0;list-style:none}
+.listing li{display:grid;grid-template-columns:2.2em max-content minmax(14em,1fr);gap:0 12px;padding:2px 6px;border-radius:4px;white-space:pre}
+.listing .ln{color:var(--muted);text-align:right}
+.listing .cm{color:var(--muted);white-space:normal;font-family:var(--f-body);font-size:12px}
+.listing li.cur{background:var(--surface2);box-shadow:inset 3px 0 0 var(--accent)}
+.listing li.cur .op{color:var(--accent);font-weight:600}
+.src li{grid-template-columns:2.2em minmax(0,1fr)}
+.src li.cur{box-shadow:inset 3px 0 0 var(--accent2)}
+.src li.cur .op{color:var(--accent2)}
+
+.lanes{display:grid;grid-template-columns:5.5em repeat(8,minmax(0,1fr));gap:4px;align-items:center;font-family:var(--f-mono);font-size:12px}
+.lanes .lab{color:var(--muted);font-size:11.5px;font-family:var(--f-body)}
+.lanes .hdr{text-align:center;color:var(--muted);font-size:11px}
+.cell{text-align:center;border-radius:4px;padding:5px 0;border:1px solid var(--line);background:var(--bg);font-variant-numeric:tabular-nums;transition:background .25s,color .25s}
+.cell.on{background:var(--on);color:var(--onInk);border-color:var(--on)}
+.cell.chg{outline:2px solid var(--lit);outline-offset:1px}
+.cell.dim{opacity:.45}
+.cell.num{font-weight:600}
+.hex{font-family:var(--f-mono);font-size:11px;color:var(--muted);text-align:left;padding-left:4px}
+.regs{display:grid;grid-template-columns:5.5em repeat(8,minmax(0,1fr)) 3.6em;gap:4px;align-items:center;font-family:var(--f-mono);font-size:12px}
+.regs .lab{color:var(--muted);font-size:11.5px}
+.bit{height:18px;border-radius:3px;border:1px solid var(--line);background:var(--bg)}
+.bit.on{background:var(--accent2);border-color:var(--accent2)}
+.bit.na{background:transparent;border-style:dashed}
+.regs .mc{height:auto;text-align:center;padding:2px 0;font-weight:600}
+.regs .mc.z{background:var(--good);color:var(--onInk);border-color:var(--good)}
+.groups{display:flex;flex-direction:column;gap:6px}
+.grp{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;background:var(--bg)}
+.grp .pc{font-family:var(--f-mono);font-size:12px}
+.grp .st{font-size:12px;font-weight:600;padding:1px 8px;border-radius:10px;background:var(--surface2)}
+.grp .st.run{background:var(--accent2);color:var(--onInk)}
+.grp .st.wait{background:var(--lit);color:#15181c}
+.grp .m{grid-column:1/-1;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:3px}
+.grp .m span{height:8px;border-radius:2px;background:var(--surface2)}
+.grp .m span.on{background:var(--accent2)}
+.stack-h{font-size:12px;color:var(--muted)}
+.note{border-left:3px solid var(--accent);padding:4px 0 4px 12px;font-size:15px;min-height:4.5em}
+.caveat{font-size:13px;color:var(--muted)}
+
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:900px;background:var(--surface)}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{font-family:var(--f-display);font-size:15px;letter-spacing:.04em;background:var(--surface2)}
+tbody th{font-weight:500;color:var(--muted);white-space:nowrap}
+tr:last-child td,tr:last-child th{border-bottom:0}
+td code{font-size:12px}
+
+.codes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:980px){.codes{grid-template-columns:minmax(0,1fr)}}
+.codes figure{margin:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+.codes figcaption{font-family:var(--f-display);font-weight:700;font-size:17px}
+pre.code{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;line-height:1.55;font-size:12px}
+pre.code .c{color:var(--muted)}
+.sources{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.sources a{color:var(--accent2)}
+@media (prefers-reduced-motion: reduce){.cell{transition:none}}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Divergent branch · EXEC mask · convergence barrier · CND</span>
+    <h1>SIMT 分支機制</h1>
+    <p class="lede">一個 warp 只有一條指令流，可是 <code>if</code> 讓一半的 lane 想走 then、另一半想走 else。GPU 不能真的讓 lane 各跳各的，於是編譯器在分支前後插入額外的指令，讓兩條路都跑一遍，每次只讓對的那一半寫回結果。這頁用同一段程式，逐步比較 NVIDIA、AMD、PowerVR、Mali 插進去的 code 長什麼樣，以及硬體在每一步記了什麼。</p>
+  </header>
+
+  <section>
+    <h2>每一家都要解決的三件事</h2>
+    <div class="three">
+      <div><b>1 · 哪些 lane 要寫回</b><p>每條 lane 要有一個 bit 決定這條指令要不要寫回結果。AMD 是 <code>EXEC</code>，NVIDIA 是 predicate 加上硬體 active mask，PowerVR 是每個 instance 的 <code>Pe</code>。</p></div>
+      <div><b>2 · 另一組何時跑、在哪會合</b><p>then 跑完要切到 else，最後全部合回來。差別在這份狀態記在哪裡：硬體 stack、barrier 暫存器、SGPR，或每個 instance 自己的計數器。</p></div>
+      <div><b>3 · 一整組都沒人就跳過</b><p>mask 全是 0 時還逐條執行就是浪費，所以都有「沒人 active 就整段跳過」的機制，例如 AMD 的 <code>s_cbranch_execz</code>。</p></div>
+    </div>
+    <p class="sub">在這三件事之前，編譯器還有一步 <b>divergence analysis</b>。如果能證明條件對整個 warp 都一樣（例如來自 uniform 或 kernel 參數），就只產生一般的跳躍，完全不需要 mask。另外，很短的分支通常直接改成 predicate 或 select，讓兩邊都算，不產生分支。</p>
+  </section>
+
+  <section>
+    <h2>逐步執行</h2>
+    <p class="sub">8 條 lane 跑同一段 kernel，輸入 <code>in = [3, -1, 7, 0, 6, -4, 1, 9]</code>。左邊是原始碼和各家插好指令後的組合語言，右邊是每條 lane 的值和硬體狀態。藍底表示這一步會寫回的 lane，黃框表示值剛被改掉的 lane。</p>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="硬體" id="vendors"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn" id="prev" aria-label="上一步">◀ 上一步</button>
+        <button class="btn" id="next" aria-label="下一步">下一步 ▶</button>
+        <button class="btn" id="play">自動播放</button>
+        <span class="stepno" id="stepno"></span>
+      </div>
+    </div>
+    <div class="dbg">
+      <div class="pane">
+        <h3>OpenCL C</h3>
+        <ol class="listing src" id="src"></ol>
+        <h3 id="isa-h">ISA</h3>
+        <ol class="listing" id="asm"></ol>
+        <p class="caveat" id="caveat"></p>
+      </div>
+      <div class="pane">
+        <h3>Lane 狀態</h3>
+        <div class="lanes" id="lanes"></div>
+        <h3 id="state-h">硬體狀態</h3>
+        <div id="state"></div>
+        <p class="note" id="note" aria-live="polite"></p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>四家怎麼記住「另一組」</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th></th><th>NVIDIA Pascal 以前</th><th>NVIDIA Volta 以後</th><th>AMD GCN / RDNA</th><th>PowerVR Rogue</th><th>Arm Mali Valhall</th></tr></thead>
+        <tbody>
+          <tr><th>per-lane 開關</th><td>SIMT stack 頂端的 active mask，加上 predicate</td><td>硬體 active mask，加上 predicate <code>P0–P6</code></td><td><code>EXEC</code>（wave64 是 64 bit，wave32 是 32 bit）</td><td>每個 instance 一個 <code>Pe</code> bit</td><td>由硬體管理，細節沒有公開</td></tr>
+          <tr><th>巢狀狀態存在哪</th><td>硬體 stack，每格是（PC, mask）</td><td>convergence barrier 暫存器 <code>B0–B15</code>，不夠用時可用 <code>BMOV</code> spill 到一般暫存器</td><td>SGPR，由編譯器分配，每層一組</td><td>每個 instance 一個 mask count，數字本身就代表停在第幾層</td><td>由硬體管理</td></tr>
+          <tr><th>分歧時插入</th><td><code>SSY</code> 推入會合點</td><td><code>BSSY Bx, 會合點</code></td><td><code>s_and_saveexec</code> + <code>s_xor</code></td><td><code>CNDST</code></td><td>分支指令帶 <code>.reconverge</code></td></tr>
+          <tr><th>else</th><td>硬體 pop stack，換另一組</td><td>scheduler 換另一組 thread 跑</td><td><code>s_or_saveexec</code> + <code>s_xor exec</code></td><td><code>CNDEF</code>（ElseIf）</td><td>硬體處理</td></tr>
+          <tr><th>會合</th><td><code>SYNC</code> pop 到會合點那一格</td><td><code>BSYNC Bx</code>，等 Bx 記的 threads 全部到齊</td><td><code>s_or_b64 exec, exec, saved</code></td><td><code>CNDEND</code>：count 減 1，歸 0 的 instance 重新開始跑</td><td>帶 <code>.reconverge</code> 的指令執行完後合併</td></tr>
+          <tr><th>沒人就跳過</th><td>硬體自動處理</td><td>只會排程有 thread 的那一組</td><td><code>s_cbranch_execz</code></td><td>BR 有 <code>.ALLINST</code> / <code>.ANYINST</code> modifier，但文件沒寫語意</td><td>未公開</td></tr>
+          <tr><th>迴圈</th><td><code>PBK</code> / <code>BRK</code></td><td><code>BREAK</code> 把 thread 從 Bx 移除</td><td>累積 break mask，<code>s_andn2 exec</code>，再 <code>s_cbranch_execnz</code></td><td><code>CNDLT</code>（Conditional Loop Test）</td><td>未公開</td></tr>
+          <tr><th>短分支</th><td colspan="2">predicate，例如 <code>@P1 MOV</code> 或 <code>FSEL</code></td><td><code>v_cndmask_b32</code></td><td>test 指令加條件 mov</td><td><code>CSEL</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub">記法大致分兩派。AMD 把 mask 交給編譯器，用一般的 scalar 指令搬來搬去，硬體非常單純，但 CFG 必須先結構化。NVIDIA、Mali 把狀態交給硬體，編譯器只負責標出分歧點和會合點。PowerVR 介於兩者之間：狀態是每個 instance 一個計數器，由編譯器插入 CND 指令去更新。</p>
+  </section>
+
+  <section>
+    <h2>編譯器在哪裡插 code</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>階段</th><th>AMD（LLVM AMDGPU）</th><th>NVIDIA（ptxas）</th><th>PowerVR / Mali（Mesa）</th></tr></thead>
+        <tbody>
+          <tr><th>1 · 哪些分支是 divergent</th><td>divergence analysis，uniform 分支變成 <code>s_cmp</code> + <code>s_cbranch_scc</code></td><td>同樣做分析，Blackwell 會把能證明 uniform 的分支編成 <code>BRA.U</code></td><td>NIR 的 divergence analysis</td></tr>
+          <tr><th>2 · 結構化</th><td><code>StructurizeCFG</code> 把任意 CFG 整理成巢狀 if / loop，EXEC 的做法依賴這個結構</td><td>不需要，convergence barrier 可以處理非結構化的 CFG</td><td>NIR 本身就是結構化的 <code>nir_if</code> / <code>nir_loop</code></td></tr>
+          <tr><th>3 · 標記</th><td><code>SIAnnotateControlFlow</code> 插入 <code>llvm.amdgcn.if / else / if.break / loop / end.cf</code></td><td>在分支前插 <code>BSSY</code>，在 post-dominator 插 <code>BSYNC</code></td><td>PowerVR：if / else / end 分別對應 <code>CNDST</code> / <code>CNDEF</code> / <code>CNDEND</code>，迴圈用 <code>CNDLT</code><br>Mali：一個 pass 用 data-flow analysis 填每條指令的 flow-control 欄位</td></tr>
+          <tr><th>4 · 展開</th><td><code>SILowerControlFlow</code> 把 <code>SI_IF</code>、<code>SI_ELSE</code> 等 pseudo 指令展開成 <code>s_*_saveexec</code> 系列</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>迴圈：有些 lane 先離開</h2>
+    <p class="sub">迴圈的難處在於每條 lane 的迭代次數不同。先離開的 lane 必須關掉，直到最後一條 lane 也離開，再全部恢復。</p>
+    <div class="codes">
+      <figure><figcaption>AMD</figcaption>
+<pre class="code">    s_mov_b64   s[4:5], 0          <span class="c">; break mask</span>
+LOOP:
+    ...                            <span class="c">; 迴圈本體</span>
+    v_cmp_...   vcc, ...           <span class="c">; 這條 lane 要離開嗎</span>
+    s_or_b64    s[4:5], vcc, s[4:5] <span class="c">; SI_IF_BREAK：累積</span>
+    s_andn2_b64 exec, exec, s[4:5] <span class="c">; SI_LOOP：關掉離開的</span>
+    s_cbranch_execnz LOOP          <span class="c">; 還有人就再一輪</span>
+    s_or_b64    exec, exec, s[4:5] <span class="c">; END_CF：全部回來</span></pre></figure>
+      <figure><figcaption>PowerVR</figcaption>
+<pre class="code">LOOP:
+    ...                       <span class="c">; 迴圈本體（Pe=1 才跑）</span>
+    tst...  p0, ...           <span class="c">; 這個 instance 還要繼續嗎</span>
+    cndlt   p0, mc, p0, mc, 1
+    <span class="c">; 繼續：count 不變
+    ; 不繼續：count +1（停住）
+    ; 沒有任何 running instance 要繼續：
+    ;   輸出的 P0 表示可以離開迴圈</span>
+    @p0 br  LOOP              <span class="c">; 示意</span>
+    cndend  mc, mc, 1         <span class="c">; 停住的恢復</span></pre></figure>
+      <figure><figcaption>NVIDIA Volta 以後</figcaption>
+<pre class="code">    BSSY  B0, EXIT       <span class="c">; 記下進迴圈的 threads</span>
+LOOP:
+    ...
+    ISETP ... P0, ...    <span class="c">; 這個 thread 還要繼續嗎</span>
+    @P0 BRA LOOP         <span class="c">; 要的回頭，其他往下</span>
+EXIT:
+    BSYNC B0             <span class="c">; 先離開的在這等，
+                         ;   最後一個到了才合併</span>
+
+<span class="c">// 迴圈中途 break 到更外層時，
+// 用 BREAK 把 thread 從 Bx 拿掉，
+// 避免 BSYNC 永遠等不到它</span></pre></figure>
+    </div>
+    <p class="caveat">PowerVR 那段是依 ISA 文件中 <code>CNDLT</code> 的 pseudo-code 組出來的示意，<code>tst</code> 和 <code>br</code> 的寫法不是真實語法。</p>
+  </section>
+
+  <section>
+    <h2>延伸：每條 lane 要呼叫不同的函式</h2>
+    <p class="sub">function pointer 或非 uniform 的 descriptor 會讓每條 lane 的跳躍目標都不一樣，mask 的做法沒辦法直接處理。各家的解法都是一個 <b>waterfall 迴圈</b>：每一輪挑一條 lane 的目標，讓目標相同的 lane 一起執行，執行完就關掉，直到所有 lane 都處理過。</p>
+    <div class="codes" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      <figure><figcaption>PowerVR：CNDSETL / CNDLPC</figcaption>
+<pre class="code">CALL_LOOP:
+    cndsetl.a mc, mc, addr
+    cndsetl.b mc, mc, addr
+    <span class="c">; 找第一個 Pe=1 的 instance，拿它的 addr 當 link address
+    ; addr 跟它不同的 instance 先停住</span>
+    ...call...
+    cndlpc    mc, mc
+    <span class="c">; 剛執行過的 → count = 2（標記完成）
+    ; 被跳過的 → count = 0（下一輪再跑）</span></pre></figure>
+      <figure><figcaption>AMD：readfirstlane 迴圈</figcaption>
+<pre class="code">LOOP:
+    v_readfirstlane_b32 s6, v2      <span class="c">; 取第一條 active lane 的值</span>
+    v_cmp_eq_u32  vcc, s6, v2       <span class="c">; 跟它一樣的 lanes</span>
+    s_and_saveexec_b64 s[8:9], vcc
+    ...用 uniform 的 s6 做事...
+    s_xor_b64 exec, exec, s[8:9]    <span class="c">; 處理完的關掉</span>
+    s_cbranch_execnz LOOP</pre></figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>資料來源</h2>
+    <div class="sources">
+      <a href="https://docs.imgtec.com/reference-manuals/powervr-instruction-set-reference/html/topics/conditional-instructions/CNDST.html">Imagination：PowerVR Instruction Set Reference — CNDST</a>
+      <a href="https://docs.imgtec.com/reference-manuals/powervr-instruction-set-reference/html/topics/conditional-instructions/CNDEF.html">Imagination：PowerVR Instruction Set Reference — CNDEF</a>
+      <a href="https://docs.imgtec.com/reference-manuals/powervr-instruction-set-reference/html/topics/conditional-instructions/CNDEND.html">Imagination：PowerVR Instruction Set Reference — CNDEND</a>
+      <a href="https://docs.imgtec.com/reference-manuals/powervr-instruction-set-reference/html/topics/conditional-instructions/CNDLT.html">Imagination：PowerVR Instruction Set Reference — CNDLT</a>
+      <a href="https://docs.imgtec.com/reference-manuals/powervr-instruction-set-reference/html/topics/conditional-instructions/CNDSETL.html">Imagination：PowerVR Instruction Set Reference — CNDSETL / CNDLPC</a>
+      <a href="https://docs.imgtec.com/reference-manuals/powervr-instruction-set-reference/html/topics/flow-control-instructions.html">Imagination：PowerVR Instruction Set Reference — Flow Control</a>
+      <a href="https://llvm.googlesource.com/llvm-project/+/0ede5637ff192398abd09b3d104d43e3be3dfa24/llvm/lib/Target/AMDGPU/SILowerControlFlow.cpp">LLVM：SILowerControlFlow.cpp</a>
+      <a href="https://arxiv.org/pdf/2407.02944">arXiv 2407.02944：Control Flow Management in Modern GPUs</a>
+      <a href="https://arxiv.org/pdf/2607.23402">arXiv 2607.23402：Characterizing Warp Divergence from Pascal to Blackwell</a>
+      <a href="https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/16804">Mesa MR 16804：pan/va: Insert flow control properly</a>
+      <a href="https://www.collabora.com/news-and-blog/news-and-events/reverse-engineering-the-mali-g78.html">Collabora：Reverse-engineering the Mali G78</a>
+      <a href="https://icecream95.gitlab.io/mali-g610-reverse-engineering-part-1.html">Mali G610 Reverse Engineering, Part 1</a>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+const IN=[3,-1,7,0,6,-4,1,9], V1=[6,-1,14,0,12,-4,2,18], V2=[6,-1,10,0,10,-4,2,10], V3=[6,1,10,0,10,4,2,10];
+const ALL=0xFF, A=0xD5, NA=0x2A, B=0x94;
+const SRC=['int x = in[gid];','if (x > 0) {','    x = x * 2;','    if (x > 10)','        x = 10;','} else {','    x = -x;','}','out[gid] = x;'];
+const hex = m => m==null ? '—' : '0x'+m.toString(16).toUpperCase().padStart(2,'0');
+const bits = m => [...Array(8)].map((_,i)=>(m>>i)&1);
+
+function maskRow(label, m){
+  const cells = m==null ? bits(0).map(()=>'<span class="bit na"></span>').join('') : bits(m).map(b=>`<span class="bit${b?' on':''}"></span>`).join('');
+  return `<span class="lab">${label}</span>${cells}<span class="hex">${hex(m)}</span>`;
+}
+function regs(rows){ return `<div class="regs">${rows.join('')}</div>`; }
+function groups(gs, title){
+  return `${title?`<div class="stack-h">${title}</div>`:''}<div class="groups">${gs.map(g=>`<div class="grp"><span class="pc">${g.pc}</span><span class="st ${g.st}">${{run:'執行中',wait:'等待會合',ready:'待執行',stack:'在 stack 裡'}[g.st]}</span><span class="m">${bits(g.m).map(b=>`<span class="${b?'on':''}"></span>`).join('')}</span></div>`).join('')}</div>`;
+}
+
+const VENDORS = {
+amd:{ name:'AMD', isa:'GCN ISA（wave64，只畫 8 lanes）',
+  caveat:'展開方式照 LLVM SILowerControlFlow.cpp 的註解。真實 wave64 要用 64-bit mask，這裡只畫 8 bit。',
+  asm:[
+    ['global_load_dword v1, v[2:3], off','x = in[gid]',0],
+    ['v_cmp_lt_i32 vcc, 0, v1','A：x > 0 → VCC',1],
+    ['s_and_saveexec_b64 s[0:1], vcc','存舊 EXEC，EXEC &= VCC',1],
+    ['s_xor_b64 s[0:1], exec, s[0:1]','s[0:1] = else 組',1],
+    ['s_cbranch_execz ELSE','then 組沒人就跳過',1],
+    ['v_lshlrev_b32 v1, 1, v1','x = x * 2',2],
+    ['v_cmp_lt_i32 vcc, 10, v1','B：x > 10',3],
+    ['s_and_saveexec_b64 s[2:3], vcc','巢狀：再存一層',3],
+    ['s_cbranch_execz ENDB','',3],
+    ['v_mov_b32 v1, 10','x = 10',4],
+    ['ENDB: s_or_b64 exec, exec, s[2:3]','內層結束',4],
+    ['ELSE: s_or_saveexec_b64 s[0:1], s[0:1]','進 else',5],
+    ['s_xor_b64 exec, exec, s[0:1]','EXEC = else 組',5],
+    ['s_cbranch_execz ENDA','',5],
+    ['v_sub_u32 v1, 0, v1','x = -x',6],
+    ['ENDA: s_or_b64 exec, exec, s[0:1]','全部回來',7],
+    ['global_store_dword v[4:5], v1, off','out[gid] = x',8]],
+  init:{exec:ALL, vcc:null, s0:null, s2:null},
+  active:s=>s.exec,
+  view:s=>regs([maskRow('EXEC',s.exec),maskRow('VCC',s.vcc),maskRow('s[0:1]',s.s0),maskRow('s[2:3]',s.s2)]),
+  steps:[
+    {l:0, vals:IN, n:'每條 lane 載入自己的 x，EXEC 全開。為了好看只畫 8 條 lane，實際是 wave64，mask 有 64 bits。'},
+    {l:1, vcc:A, n:'v_cmp 每條 lane 各比一次，結果一條 lane 一個 bit 寫進 VCC：lane 0、2、4、6、7 成立。'},
+    {l:2, s0:ALL, exec:A, n:'s_and_saveexec：先把舊 EXEC 存進 s[0:1]，再做 EXEC &= VCC。從這裡開始，只有 x > 0 的 lane 會寫回結果。'},
+    {l:3, s0:NA, n:'s_xor：s[0:1] = 舊 EXEC ^ 新 EXEC，得到等一下要跑 else 的 lane 1、3、5。這組 SGPR 就是編譯器自己管理的「stack」。'},
+    {l:4, n:'s_cbranch_execz：EXEC 全是 0 才會整段跳過。這裡還有 lane active，所以不跳。整段程式裡真正會「跳」的只有這種指令，而且是整個 wave 一起跳。'},
+    {l:5, vals:V1, n:'x = x * 2 只寫回 EXEC 裡的 lane。lane 1、3、5 的 ALU 一樣佔用這個 cycle，只是不寫回。'},
+    {l:6, vcc:B, n:'巢狀的 if：VCC = x > 10。inactive lane 的 VCC bit 是 0。'},
+    {l:7, s2:A, exec:B, n:'再存一層：s[2:3] = 目前的 EXEC（外層 then 組），EXEC 變成 0x94。巢狀幾層，就要用幾組 SGPR。'},
+    {l:8, n:'還有 lane active，不跳。'},
+    {l:9, vals:V2, n:'x = 10 只寫回 lane 2、4、7。'},
+    {l:10, exec:A, n:'內層 if 結束：EXEC |= s[2:3]，回到外層的 then 組。'},
+    {l:11, s0:A, exec:ALL, n:'進入 else：s_or_saveexec 先把目前的 EXEC（then 組）存進 s[0:1]，再把 EXEC 設成 else 組 | then 組，也就是全開。'},
+    {l:12, exec:NA, n:'s_xor：EXEC = 全開 ^ then 組 = else 組（lane 1、3、5）。'},
+    {l:13, n:'else 組有 lane active，不跳。'},
+    {l:14, vals:V3, n:'x = -x 只寫回 lane 1、3、5。'},
+    {l:15, exec:ALL, n:'外層 if 結束：EXEC |= s[0:1]，全部 lane 回來。'},
+    {l:16, n:'store 時 EXEC 全開，8 條 lane 都寫出去。then 和 else 兩條路都花了時間，這就是 divergence 的成本。'}]},
+
+nv:{ name:'NVIDIA Volta+', isa:'SASS（Volta 以後，示意）',
+  caveat:'SASS 是依論文描述的 BSSY / BSYNC 語意寫的示意。真實的 ptxas 輸出要用 cuobjdump -sass 看；兩組 thread 誰先跑由硬體決定。',
+  asm:[
+    ['LDG.E R1, [R2.64]','x = in[gid]',0],
+    ['ISETP.GT.AND P0, PT, R1, RZ, PT','P0 = x > 0',1],
+    ['BSSY B0, `(ENDA)','記下 threads 與會合點',1],
+    ['@!P0 BRA `(ELSE)','不成立的分出去',1],
+    ['IMAD.SHL.U32 R1, R1, 0x2, RZ','x = x * 2',2],
+    ['ISETP.GT.AND P1, PT, R1, 0xa, PT','P1 = x > 10',3],
+    ['@P1 MOV R1, 0xa','短分支 → predicate',4],
+    ['BRA `(ENDA)','',5],
+    ['ELSE: IADD3 R1, -R1, RZ, RZ','x = -x',6],
+    ['ENDA: BSYNC B0','等 B0 的 threads 到齊',7],
+    ['STG.E [R4.64], R1','out[gid] = x',8]],
+  init:{p0:null,p1:null,b0:null,g:[{pc:'PC 0 · 整個 warp',st:'run',m:ALL}], act:ALL},
+  active:s=>s.act,
+  view:s=>regs([maskRow('P0',s.p0),maskRow('P1',s.p1),maskRow('B0',s.b0)])+groups(s.g,'warp 內的 thread 分組'),
+  steps:[
+    {l:0, vals:IN, n:'載入 x。warp 有 32 條 thread（這裡畫 8 條），全部一起跑。'},
+    {l:1, p0:A, n:'ISETP 讓每條 thread 各算出一個 predicate bit：P0 = x > 0。'},
+    {l:2, b0:ALL, n:'BSSY B0：把目前 active 的 threads（全部）記進 convergence barrier B0，同時記下會合點 ENDA。這行是 ptxas 在分支前插進來的。'},
+    {l:3, act:A, g:[{pc:'IMAD（then 組）',st:'run',m:A},{pc:'ELSE',st:'ready',m:NA}], n:'@!P0 BRA：P0 不成立的 thread 跳到 ELSE，其他的繼續往下。warp 分成兩組，各有自己的 PC，scheduler 一次只跑其中一組。'},
+    {l:4, vals:V1, n:'then 組（lane 0、2、4、6、7）執行 x * 2。'},
+    {l:5, p1:B, n:'P1 = x > 10。'},
+    {l:6, vals:V2, write:B, n:'內層 if 很短，ptxas 不產生分支，直接寫成 @P1 MOV。指令照樣發給整個 then 組，但只有 P1 成立的 lane 2、4、7 寫回。'},
+    {l:7, g:[{pc:'→ ENDA（then 組）',st:'run',m:A},{pc:'ELSE',st:'ready',m:NA}], n:'then 組跳到 ENDA。'},
+    {l:9, act:0, g:[{pc:'BSYNC B0（then 組）',st:'wait',m:A},{pc:'ELSE',st:'ready',m:NA}], n:'BSYNC B0：then 組到了，但 B0 裡記的 lane 1、3、5 還沒到，所以 then 組停在這裡等，scheduler 改去跑 else 組。'},
+    {l:8, act:NA, vals:V3, g:[{pc:'BSYNC B0（then 組）',st:'wait',m:A},{pc:'IADD3（else 組）',st:'run',m:NA}], n:'else 組（lane 1、3、5）執行 x = -x。'},
+    {l:9, act:ALL, g:[{pc:'BSYNC 通過 · 整個 warp',st:'run',m:ALL}], n:'else 組也到了 BSYNC，B0 記的 threads 全部到齊，warp 重新合成一組。'},
+    {l:10, n:'合併後一起 store。Volta 以後兩組可以交錯執行，所以 warp 內的 spin lock 不會 deadlock。代價是編譯器要明確標出會合點，需要時還要插 YIELD 或 WARPSYNC。'}]},
+
+pre:{ name:'NVIDIA Pascal-', isa:'SASS（Maxwell / Pascal，示意）',
+  caveat:'stack 的推入順序參考 arXiv 2407.02944 對 SIMT stack 的描述：會合點、not-taken 路徑、taken 路徑依序推入，taken 那組在最上面先跑。',
+  asm:[
+    ['LDG.E R1, [R2]','x = in[gid]',0],
+    ['ISETP.GT.AND P0, PT, R1, RZ, PT','P0 = x > 0',1],
+    ['SSY `(ENDA)','推入會合點',1],
+    ['@!P0 BRA `(ELSE)','分歧：推入另一組',1],
+    ['SHL R1, R1, 0x1','x = x * 2',2],
+    ['ISETP.GT.AND P1, PT, R1, 0xa, PT','',3],
+    ['@P1 MOV32I R1, 0xa','短分支 → predicate',4],
+    ['SYNC','then 做完：pop',5],
+    ['ELSE: IADD R1, -R1, RZ','x = -x',6],
+    ['SYNC','else 做完：pop',7],
+    ['ENDA: STG.E [R4], R1','out[gid] = x',8]],
+  init:{p0:null,p1:null,act:ALL,stk:[]},
+  active:s=>s.act,
+  view:s=>regs([maskRow('P0',s.p0),maskRow('P1',s.p1)])+groups([{pc:'目前執行',st:'run',m:s.act}].concat(s.stk),'SIMT stack（上面是 top）'),
+  steps:[
+    {l:0, vals:IN, n:'Pascal 以前，每個 warp 有一個硬體 SIMT stack，每一格記一個 PC 和一個 active mask。'},
+    {l:1, p0:A, n:'P0 = x > 0。'},
+    {l:2, stk:[{pc:'ENDA · 會合點',st:'stack',m:ALL}], n:'SSY ENDA：先把會合點（ENDA，全部 lane）推進 stack。'},
+    {l:3, act:A, stk:[{pc:'ELSE · not-taken',st:'stack',m:NA},{pc:'ENDA · 會合點',st:'stack',m:ALL}], n:'分歧的 branch：把 else 組（ELSE，lane 1、3、5）推進 stack，目前的執行改用 then 組的 mask 往下跑。'},
+    {l:4, vals:V1, n:'then 組執行 x * 2。'},
+    {l:5, p1:B, n:'P1 = x > 10。'},
+    {l:6, vals:V2, write:B, n:'短的內層 if 用 predicate 處理，不動 stack。'},
+    {l:7, act:NA, stk:[{pc:'ENDA · 會合點',st:'stack',m:ALL}], n:'SYNC：then 組做完，pop stack，換 else 組上來，PC 跳到 ELSE。'},
+    {l:8, vals:V3, n:'else 組執行 x = -x。'},
+    {l:9, act:ALL, stk:[], n:'SYNC：再 pop 一次，拿到（ENDA，全部 lane），warp 在會合點合併。'},
+    {l:10, n:'store。這種 stack 只能在 post-dominator 會合，兩組不能交錯執行，所以 warp 內的 spin lock 會 deadlock。Volta 改用 convergence barrier，就是為了解決這個問題。'}]},
+
+img:{ name:'PowerVR', isa:'PowerVR USC（CND 指令照 ISA 文件，其他指令示意）',
+  caveat:'CNDST / CNDEF / CNDEND 的行為照 Imagination ISA 文件的 pseudo-code 推演。mc 代表存 mask count 的暫存器（文件寫成 S0 / W0 運算元）；ld、tst、shl、mov 是示意寫法。',
+  asm:[
+    ['ld      r1, [in + gid]','x = in[gid]',0],
+    ['tst.gt  p0, r1, 0','P0 = x > 0',1],
+    ['cndst   p0, mc, mc, 1','Conditional Start',1],
+    ['shl     r1, r1, 1','x = x * 2',2],
+    ['tst.gt  p0, r1, 10','P0 = x > 10',3],
+    ['cndst   p0, mc, mc, 1','巢狀 Start',3],
+    ['mov     r1, 10','x = 10',4],
+    ['cndend  mc, mc, 1','內層 End',4],
+    ['cndef   true, mc, mc, 1','Conditional ElseIf',5],
+    ['mov     r1, -r1','x = -x',6],
+    ['cndend  mc, mc, 1','外層 End',7],
+    ['st      [out + gid], r1','out[gid] = x',8]],
+  init:{p0:null, mc:[0,0,0,0,0,0,0,0], pe:ALL},
+  active:s=>s.pe,
+  view:s=>`<div class="regs">${maskRow('P0',s.p0)}<span class="lab">mask count</span>${s.mc.map(v=>`<span class="bit mc${v===0?' z':''}">${v}</span>`).join('')}<span class="hex"></span>${maskRow('Pe',s.pe)}</div>`,
+  steps:[
+    {l:0, vals:IN, n:'每個 instance 有一個 mask count，0 代表正在跑。另外有一個 Pe bit，決定這個 instance 要不要執行指令。'},
+    {l:1, p0:A, n:'test 指令把比較結果寫進每個 instance 的 P0。'},
+    {l:2, mc:[0,1,0,1,0,1,0,0], pe:A, n:'CNDST：count 是 0 且 P0 成立 → 維持 0，Pe = 1。count 是 0 但 P0 不成立 → count = 0 + 1，Pe = 0。本來就停著的 instance，count 會再 +1。'},
+    {l:3, vals:V1, n:'只有 Pe = 1 的 instance 執行 x * 2。'},
+    {l:4, p0:B, n:'內層條件：P0 = x > 10。'},
+    {l:5, mc:[1,2,0,2,0,2,1,0], pe:B, n:'巢狀的 CNDST：lane 2、4、7 維持 0。lane 0、6 在這一層停下，變成 1。lane 1、3、5 本來就停在外層（count 1），再 +1 變成 2。count 的值就是「停在第幾層」，不需要另外存 mask。'},
+    {l:6, vals:V2, n:'x = 10 只寫回 lane 2、4、7。'},
+    {l:7, mc:[0,1,0,1,0,1,0,0], pe:A, n:'CNDEND：count > 1 的減 1（lane 1、3、5：2 → 1，仍然停著）；其他的歸 0，Pe = 1。回到外層的 then 組。'},
+    {l:8, mc:[1,0,1,0,1,0,1,1], pe:NA, n:'CNDEF（ElseIf），條件用 true：正在跑的（count 0）變成 1 停下；count 剛好是 1 的（在這一層被擋掉的 else 組）歸 0，開始跑。'},
+    {l:9, vals:V3, n:'x = -x 只寫回 lane 1、3、5。'},
+    {l:10, mc:[0,0,0,0,0,0,0,0], pe:ALL, n:'CNDEND：count 1 → 0，全部 instance 回來，Pe 全開。'},
+    {l:11, n:'store。和 AMD 比較：AMD 每多一層巢狀，就要多一組 SGPR 存整個 mask；PowerVR 每個 instance 只要一個小計數器，巢狀深度直接編碼在數字裡。'}]},
+
+mali:{ name:'Mali', isa:'Valhall（Mesa Panfrost 風格，示意）',
+  caveat:'Arm 沒有公開 Mali 的 divergence 硬體。這裡只依 .reconverge 標記推測行為，兩組誰先跑、何時合併都是示意。',
+  asm:[
+    ['LOAD.i32.slot0.wait0 r1, r60, offset:0','x = in[gid]',0],
+    ['ICMP.s32.gt r2, r1, 0','r2 = x > 0',1],
+    ['BRANCHZ.eq.reconverge r2, →ELSE','r2 == 0 的 thread 跳',1],
+    ['IADD.s32 r1, r1, r1','x = x * 2',2],
+    ['ICMP.s32.gt r3, r1, 10','r3 = x > 10',3],
+    ['CSEL.s32 r1, r3, 10, r1','短分支 → select',4],
+    ['BRANCH →ENDA','（示意）',5],
+    ['ELSE: ISUB.s32.reconverge r1, 0, r1','x = -x，之後會合',6],
+    ['ENDA: STORE.i32.slot0 r1, r62, offset:0','out[gid] = x',8]],
+  init:{r2:null, r3:null, act:ALL, g:[{pc:'整個 warp',st:'run',m:ALL}]},
+  active:s=>s.act,
+  view:s=>regs([maskRow('r2≠0',s.r2),maskRow('r3≠0',s.r3)])+groups(s.g,'warp 內的 thread 分組（推測）'),
+  steps:[
+    {l:0, vals:IN, n:'Valhall 拿掉了 Bifrost 的 clause，改成一般的線性指令流，warp 有 16 條 thread（這裡畫 8 條）。'},
+    {l:1, r2:A, n:'ICMP 算出 r2 = x > 0。'},
+    {l:2, act:A, g:[{pc:'IADD（then 組）',st:'run',m:A},{pc:'ELSE',st:'ready',m:NA}], n:'BRANCHZ：r2 為 0 的 thread 跳到 ELSE。每條 Valhall 指令都帶一個 flow-control 欄位（wait / reconverge / end 等）；分支上的 .reconverge 告訴硬體，分開的 thread 之後要合回來。'},
+    {l:3, vals:V1, n:'then 組執行 x * 2。'},
+    {l:4, r3:B, n:'r3 = x > 10。'},
+    {l:5, vals:V2, n:'短的內層 if 直接用 CSEL：then 組全部執行，只有 x > 10 的值被換成 10。'},
+    {l:6, act:NA, g:[{pc:'ENDA（then 組）',st:'wait',m:A},{pc:'ISUB（else 組）',st:'run',m:NA}], n:'then 組跳到 ENDA 等待，換 else 組執行。'},
+    {l:7, act:ALL, vals:V3, g:[{pc:'ENDA · 整個 warp',st:'run',m:ALL}], n:'else 組執行 x = -x。這條指令帶 .reconverge，執行完後兩組合併。'},
+    {l:8, n:'合併後一起 store。Mesa 的 Panfrost 編譯器要靠 data-flow analysis，替每條指令決定 flow-control 欄位該填什麼。'}]}
+};
+const ORDER=['nv','pre','amd','img','mali'];
+
+// build cumulative states
+for (const k of ORDER){
+  const v = VENDORS[k]; let s = Object.assign({vals:null}, JSON.parse(JSON.stringify(v.init)));
+  v.states = v.steps.map(st=>{
+    const prev = s.vals; s = Object.assign({}, s, st); delete s.n; delete s.l;
+    s.write = st.write ?? null;
+    s.changed = prev && s.vals ? s.vals.map((x,i)=>x!==prev[i]) : (s.vals? s.vals.map(()=>true) : null);
+    if (!st.vals) s.changed = null;
+    return s;
+  });
+}
+
+const cur = {v:'nv', i:0, timer:null};
+const $ = id => document.getElementById(id);
+const vbox = $('vendors');
+ORDER.forEach(k=>{ const b=document.createElement('button'); b.id='v-'+k; b.textContent=VENDORS[k].name; b.onclick=()=>{cur.v=k;cur.i=0;render();}; vbox.appendChild(b); });
+
+function render(){
+  const v = VENDORS[cur.v], st = v.steps[cur.i], s = v.states[cur.i];
+  ORDER.forEach(k=>$('v-'+k).setAttribute('aria-pressed', String(k===cur.v)));
+  $('stepno').textContent = `${cur.i+1} / ${v.steps.length}`;
+  $('isa-h').textContent = v.isa;
+  $('caveat').textContent = v.caveat;
+  const srcLine = v.asm[st.l][2];
+  $('src').innerHTML = SRC.map((t,i)=>`<li class="${i===srcLine?'cur':''}"><span class="ln">${i+1}</span><span class="op">${esc(t)}</span></li>`).join('');
+  $('asm').innerHTML = v.asm.map((a,i)=>`<li class="${i===st.l?'cur':''}"><span class="ln">${i}</span><span class="op">${esc(a[0])}</span><span class="cm">${a[1]?'; '+a[1]:''}</span></li>`).join('');
+  const act = v.active(s), wr = s.write ?? act;
+  let h = '<span></span>' + [...Array(8)].map((_,i)=>`<span class="hdr">lane ${i}</span>`).join('');
+  h += '<span class="lab">active</span>' + bits(act).map(b=>`<span class="cell${b?' on':''}">${b?'●':'○'}</span>`).join('');
+  h += '<span class="lab">x</span>' + [...Array(8)].map((_,i)=>{
+    const val = s.vals ? s.vals[i] : '?';
+    const ch = s.changed && s.changed[i];
+    const w = (wr>>i)&1;
+    return `<span class="cell num${ch?' chg':''}${!w && s.vals?' dim':''}">${val}</span>`;
+  }).join('');
+  $('lanes').innerHTML = h;
+  $('state').innerHTML = v.view(s);
+  $('note').textContent = st.n;
+  $('prev').disabled = cur.i===0; $('next').disabled = cur.i===v.steps.length-1;
+  $('play').textContent = cur.timer ? '暫停' : '自動播放';
+}
+function esc(t){ return t.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function go(d){ const n = VENDORS[cur.v].steps.length; cur.i = Math.max(0, Math.min(n-1, cur.i+d)); render(); }
+$('prev').onclick = ()=>{ stop(); go(-1); };
+$('next').onclick = ()=>{ stop(); go(1); };
+function stop(){ if (cur.timer){ clearInterval(cur.timer); cur.timer=null; } }
+$('play').onclick = ()=>{
+  if (cur.timer){ stop(); render(); return; }
+  if (cur.i === VENDORS[cur.v].steps.length-1) cur.i = 0;
+  cur.timer = setInterval(()=>{ if (cur.i >= VENDORS[cur.v].steps.length-1){ stop(); render(); } else go(1); }, 2200);
+  render();
+};
+document.addEventListener('keydown', e=>{
+  if (e.target.closest('input,textarea')) return;
+  if (e.key==='ArrowRight'){ stop(); go(1); } else if (e.key==='ArrowLeft'){ stop(); go(-1); }
+});
+render();
+})();
+</script>
+
+</body></html>
