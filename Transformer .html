@@ -1,0 +1,399 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Transformer 解剖</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (≈ 46rem) of numbered pipeline stages; matrices and diagrams scroll inside their own panels. Signature element: the heat-tile matrix. */
+:root {
+  --paper: #F2F4F6;        /* slate-tinted page */
+  --panel: #FFFFFF;
+  --ink: #15212C;          /* text */
+  --muted: #5B6773;
+  --rule: #D9DEE3;
+  --accent: #C2410C;       /* attention / highlight (burnt orange) */
+  --accent-soft: #FCE7DA;
+  --cool: #0F766E;         /* query / "this token" (teal) */
+  --cool-soft: #D6F0EC;
+  --heat-0: #FFFFFF;       /* heat scale ends (interpolated in JS) */
+  --heat-1: #C2410C;
+  --mask: #E7EAED;
+  --display: "Noto Serif TC", "Songti TC", serif;
+  --body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0E151C; --panel: #16212B; --ink: #E6EBF0; --muted: #98A4B0; --rule: #2A3742;
+    --accent: #F28B4B; --accent-soft: #3A2417; --cool: #4FD1C1; --cool-soft: #12322F;
+    --heat-0: #16212B; --heat-1: #F28B4B; --mask: #1D2833; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0E151C; --panel: #16212B; --ink: #E6EBF0; --muted: #98A4B0; --rule: #2A3742;
+  --accent: #F28B4B; --accent-soft: #3A2417; --cool: #4FD1C1; --cool-soft: #12322F;
+  --heat-0: #16212B; --heat-1: #F28B4B; --mask: #1D2833; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font: 16px/1.75 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+.wrap { max-width: 46rem; margin: 0 auto; display: grid; gap: 56px; }
+header { padding-block: 40px 0; display: grid; gap: 14px; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(30px, 6vw, 44px)/1.2 var(--display); margin: 0; text-wrap: balance; }
+h2 { font: 700 24px/1.35 var(--display); margin: 0; text-wrap: balance; display: flex; gap: 12px; align-items: baseline; }
+h2 .n { font: 500 14px/1 var(--mono); color: var(--accent); min-width: 2ch; }
+h3 { font: 700 17px/1.4 var(--body); margin: 8px 0 0; }
+p { margin: 0; max-width: 65ch; }
+.lede { font-size: 18px; color: var(--muted); }
+section { display: grid; gap: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.scroll { overflow-x: auto; min-width: 0; }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.note { font-size: 14px; color: var(--muted); }
+.tok { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); }
+.tok b { font: 700 18px/1.2 var(--body); }
+.tok small { font: 12px/1 var(--mono); color: var(--muted); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* pipeline diagram */
+.pipe { display: grid; gap: 8px; }
+.stage { display: grid; grid-template-columns: 9rem 1fr; gap: 12px; align-items: center; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--panel); }
+.stage .k { font: 500 13px/1.3 var(--mono); color: var(--muted); }
+.stage.block { border-color: var(--accent); background: var(--accent-soft); }
+.arrow { text-align: center; color: var(--muted); font-family: var(--mono); line-height: 1; }
+.repeat { font: 500 13px/1 var(--mono); color: var(--accent); }
+@media (max-width: 520px) { .stage { grid-template-columns: 1fr; gap: 2px; } }
+
+/* matrices */
+table.m { border-collapse: separate; border-spacing: 3px; font: 13px/1 var(--mono); }
+table.m th { font: 500 13px/1.2 var(--body); color: var(--muted); padding: 4px 6px; white-space: nowrap; }
+table.m th.q { color: var(--cool); font-weight: 700; }
+table.m td { min-width: 3.4em; height: 2.2em; text-align: center; border-radius: 4px; padding: 0 4px; font-variant-numeric: tabular-nums; }
+table.m td.masked { background: var(--mask); color: var(--muted); }
+table.m tr.sel th:first-child { color: var(--cool); }
+table.m tr.sel td { outline: 2px solid var(--cool); outline-offset: -1px; }
+.mats { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+.mat { display: grid; gap: 6px; min-width: 0; }
+.mat .cap { font: 500 13px/1.3 var(--mono); color: var(--muted); }
+
+/* controls */
+.controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+button {
+  font: 500 14px/1 var(--body); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 8px; padding: 9px 14px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cool); outline-offset: 2px; }
+label { font-size: 14px; color: var(--muted); display: inline-flex; gap: 8px; align-items: center; }
+input[type=range] { accent-color: var(--accent); width: 9rem; }
+select, input[type=number] { font: 14px var(--mono); padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); color: var(--ink); width: 7rem; }
+.steps { display: flex; flex-wrap: wrap; gap: 6px; }
+.steps button { padding: 7px 10px; font-size: 13px; }
+.explain { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; }
+.explain b { color: var(--accent); }
+
+/* bars */
+.bars { display: grid; gap: 6px; }
+.bar { display: grid; grid-template-columns: 4.5rem 1fr 4rem; gap: 10px; align-items: center; font-size: 14px; }
+.bar .track { height: 18px; background: var(--mask); border-radius: 4px; overflow: hidden; }
+.bar .fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width .25s; }
+.bar.pick .fill { background: var(--cool); }
+.bar .v { font: 13px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.out { font: 18px/1.6 var(--body); }
+.out .gen { color: var(--cool); font-weight: 700; }
+
+/* calculator */
+.calc { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 12px; }
+.stat { border: 1px solid var(--rule); border-radius: 8px; padding: 12px; display: grid; gap: 4px; }
+.stat .v { font: 500 22px/1.2 var(--mono); }
+.stat .k { font-size: 13px; color: var(--muted); }
+ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 65ch; }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 18px; }
+@media (prefers-reduced-motion: reduce) { .bar .fill { transition: none; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Transformer · 從一句話到下一個字</div>
+  <h1>Transformer 解剖</h1>
+  <p class="lede">一個 Transformer 每一層只做兩件事：先<b>看別的字</b>（attention），再<b>自己想一下</b>（MLP），然後重複幾十層。這頁用一句五個字的例子，把每一步的數字真的算給你看。</p>
+  <div class="row" id="heroToks"></div>
+</header>
+
+<section>
+  <h2><span class="n">01</span>全貌：一個字是怎麼流過模型的</h2>
+  <p>順序是固定的，下面每一節就對應其中一格。中間那格「Block」會疊很多層：GPT-2 small 疊 12 層，Llama 2 7B 疊 32 層。</p>
+  <div class="pipe">
+    <div class="stage"><span class="k">文字</span><span>貓坐在墊子上</span></div>
+    <div class="arrow">↓ tokenizer 切成片段，每片查一個編號</div>
+    <div class="stage"><span class="k">Token</span><span>貓 / 坐 / 在 / 墊子 / 上 → 編號</span></div>
+    <div class="arrow">↓ 查表：每個編號對應一個向量（embedding），再加上位置資訊</div>
+    <div class="stage"><span class="k">向量 X</span><span>5 個字 × d 維（例子用 d=4，真的模型是 768～8192）</span></div>
+    <div class="arrow">↓</div>
+    <div class="stage block"><span class="k">Block × N</span><span>LayerNorm → <b>Attention</b>（看別的字）→ 加回原本的 X<br>LayerNorm → <b>MLP</b>（自己想）→ 加回去</span></div>
+    <div class="arrow"><span class="repeat">↻ 重複 N 層</span></div>
+    <div class="stage"><span class="k">最後一個字的向量</span><span>乘上詞表矩陣 → 每個候選字一個分數（logit）</span></div>
+    <div class="arrow">↓ softmax 變成機率，挑一個</div>
+    <div class="stage"><span class="k">下一個字</span><span>「。」接回句尾，再跑一次 → 一個字一個字生出來</span></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">02</span>Token 與向量：先把字變成數字</h2>
+  <p>模型看不懂字，只看得懂向量。我們的玩具例子用 4 維，每一維剛好有意思（真的模型裡每一維沒有人類看得懂的名字，是訓練學出來的）：</p>
+  <div class="panel"><div class="scroll" id="xTable"></div>
+  <p class="note">「在」帶一點「動作」、「上」帶一點「東西」，因為它們常跟動作和地點一起出現。真實模型的向量就是這樣從大量文字裡學出來的。</p></div>
+</section>
+
+<section>
+  <h2><span class="n">03</span>Attention：每個字決定要「看」誰</h2>
+  <p>每個字會產生三個向量：<b>Q</b>（我在找什麼）、<b>K</b>（我是什麼）、<b>V</b>（被看到時要交出去的內容）。字 i 對字 j 的分數＝ Q<sub>i</sub>·K<sub>j</sub>，分數經過 softmax 變成「注意力權重」，最後把大家的 V 照權重加起來。</p>
+  <p>按下面的步驟一步一步看，點矩陣的任何一列可以選要追蹤哪個字。</p>
+  <div class="panel">
+    <div class="steps" id="steps"></div>
+    <div class="controls">
+      <label for="maskOn"><input type="checkbox" id="maskOn" checked> 遮住未來的字（causal mask）</label>
+      <label for="temp">銳利度 <input type="range" id="temp" min="0.2" max="3" step="0.1" value="1"><span class="mono" id="tempV">1.0</span></label>
+    </div>
+    <div class="explain" id="explain"></div>
+    <div class="scroll"><div class="mats" id="mats"></div></div>
+  </div>
+  <p class="note">這個例子的 W<sub>Q</sub> 是手工設計的：「動作」去找「動物」、「關係詞」去找「東西」。真的模型這些規則是訓練學出來的，而且沒有這麼乾淨。</p>
+</section>
+
+<section>
+  <h2><span class="n">04</span>多頭（Multi-head）：同時用好幾種眼光看</h2>
+  <p>一組 Q/K/V 只能學一種「看法」，所以模型會並排好幾組，每組叫一個 head，最後把結果接起來。下面兩個 head 吃同一句話，看的東西完全不同：</p>
+  <div class="panel"><div class="scroll"><div class="mats" id="heads"></div></div>
+  <p class="note"><b>Head 1（語意）</b>就是上一節那組：坐→貓（誰在坐）、上→墊子（在什麼上面）。<b>Head 2（位置）</b>只看位置向量，學到「看前一個字」。位置用角度表示：第 i 個字轉 i·θ 度，Q 先往回轉一格，跟前一個字的 K 方向最接近，這就是 RoPE 旋轉位置編碼的直覺。</p></div>
+</section>
+
+<section>
+  <h2><span class="n">05</span>MLP、殘差、LayerNorm：每層的另外一半</h2>
+  <ul>
+    <li><b>MLP（前饋網路）</b>：每個字各自過兩層全連接，中間放大 4 倍再縮回來。attention 負責「字跟字之間搬資訊」，MLP 負責「用搬來的資訊想事情」。一般認為事實知識（例如「巴黎是法國首都」）大多存在 MLP 的權重裡，模型約 2/3 的參數也在這裡。</li>
+    <li><b>殘差（+X）</b>：每一步的輸出是「加回」原本的向量，不是取代。所以資訊一路往上走不會被洗掉，幾十層也訓練得動。可以想成每層只在原本的筆記上補幾行。</li>
+    <li><b>LayerNorm</b>：進每一步之前，把向量的大小拉回固定範圍，避免數字越疊越大。新模型多用更省事的 RMSNorm。</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">06</span>生成：分數變機率，再挑一個字</h2>
+  <p>最後一層之後，模型對詞表裡每個字打一個分數。假設「貓坐在墊子上」後面的分數如下，調調看溫度和抽樣方式：</p>
+  <div class="panel">
+    <div class="controls">
+      <label for="gtemp">溫度 <input type="range" id="gtemp" min="0.1" max="2" step="0.05" value="1"><span class="mono" id="gtempV">1.00</span></label>
+      <label for="topk">Top-k <select id="topk"><option value="0">全部</option><option value="1">1（貪婪）</option><option value="3">3</option><option value="5">5</option></select></label>
+      <label for="rep"><input type="checkbox" id="rep"> 重複懲罰 1.3</label>
+    </div>
+    <div class="bars" id="bars"></div>
+    <div class="row"><button id="sample">抽一個字</button><button id="reset">重來</button></div>
+    <div class="out" id="out"></div>
+  </div>
+  <p class="note">溫度越低越保守，0.1 幾乎只會選分數最高的；越高越隨機。永遠選最高分（貪婪）很容易陷入重複迴圈。我們自己的小模型 nami-lm 就吃過這個虧：加上重複懲罰 1.3 之後，不用重新訓練，嚴格測驗就多對了 8 題。</p>
+</section>
+
+<section>
+  <h2><span class="n">07</span>工程師的帳：參數、算力、KV cache</h2>
+  <p>粗估公式（d＝向量維度、L＝層數，忽略詞表矩陣）：參數 ≈ 12·L·d²；每生成一個字約要 2×參數 次浮點運算；KV cache ＝ 2（K 和 V）× L × d × 長度 × 2 bytes（fp16）。</p>
+  <div class="panel">
+    <div class="controls">
+      <label for="preset">預設 <select id="preset">
+        <option value="12,768">GPT-2 small</option>
+        <option value="32,4096" selected>Llama 2 7B</option>
+        <option value="80,8192">Llama 2 70B</option>
+      </select></label>
+      <label for="L">L <input type="number" id="L" min="1" max="200" value="32"></label>
+      <label for="d">d <input type="number" id="d" min="16" max="32768" step="16" value="4096"></label>
+      <label for="seq">長度 <input type="number" id="seq" min="1" max="1000000" step="256" value="4096"></label>
+    </div>
+    <div class="calc" id="calc"></div>
+    <p class="note">為什麼一定要 GPU：上面每一步幾乎都是矩陣乘法（Q=XW、QKᵀ、A·V、MLP），正好是 tensor core 最擅長的。生成時每個字都要把全部權重讀一遍，所以小 batch 的推論常常卡在記憶體頻寬，不是算力；KV cache 也是為了不要每個字都把前面重算一次。</p>
+  </div>
+</section>
+
+<footer>例子裡的數字都由這頁的 JavaScript 當場計算，改參數會即時重算。玩具模型 d=4、5 個字、權重為手工設計，用來看懂機制，不代表真實模型的數值。Nami 做給 Ryan，2026-11-01。</footer>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const TOK = ["貓", "坐", "在", "墊子", "上"];
+  const IDS = [2711, 1530, 333, 8820, 391];         // illustrative token ids
+  const DIMS = ["動物", "動作", "關係詞", "東西"];
+  const X = [[1,0,0,0.2],[0,1,0,0],[0,0.3,1,0],[0,0,0,1],[0,0,1,0.3]];
+  // Head 1: action→seeks animal, relation→seeks thing, thing→seeks relation, animal→itself
+  const WQ = [[1,0,0,0],[4,0,0,0],[0,0,0,4],[0,0,3,0]];
+  const WK = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
+  const WV = WK;
+  const N = TOK.length, DK = 4;
+
+  const mm = (A, B) => A.map(r => B[0].map((_, j) => r.reduce((s, v, k) => s + v * B[k][j], 0)));
+  const T = A => A[0].map((_, j) => A.map(r => r[j]));
+  const softmaxRow = (r) => { const m = Math.max(...r.filter(Number.isFinite)); const e = r.map(v => Number.isFinite(v) ? Math.exp(v - m) : 0); const s = e.reduce((a, b) => a + b, 0); return e.map(v => v / s); };
+  const fmt = v => !Number.isFinite(v) ? "−∞" : (Math.abs(v) < 0.005 ? "0" : v.toFixed(2));
+
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function hex2rgb(h) { h = h.replace("#", ""); if (h.length === 3) h = h.split("").map(c => c + c).join(""); const n = parseInt(h, 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+  function heat(t) {
+    const a = hex2rgb(css("--heat-0")), b = hex2rgb(css("--heat-1"));
+    t = Math.max(0, Math.min(1, t));
+    const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+    const lum = (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
+    return { bg: `rgb(${c.join(",")})`, fg: lum < 0.55 ? "#FFFFFF" : css("--ink") };
+  }
+
+  // matrix renderer: rows labelled by tokens, cols by labels
+  function matrix(M, { rows = TOK, cols, cap, scale = "auto", masked = null, sel = -1, onPick = null }) {
+    let lo = Infinity, hi = -Infinity;
+    M.forEach(r => r.forEach(v => { if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
+    if (scale === "prob") { lo = 0; hi = 1; }
+    const span = hi - lo || 1;
+    const wrap = document.createElement("div"); wrap.className = "mat";
+    if (cap) { const c = document.createElement("div"); c.className = "cap"; c.innerHTML = cap; wrap.appendChild(c); }
+    const t = document.createElement("table"); t.className = "m";
+    const head = t.insertRow(); head.appendChild(document.createElement("th"));
+    cols.forEach(c => { const th = document.createElement("th"); th.textContent = c; head.appendChild(th); });
+    M.forEach((r, i) => {
+      const tr = t.insertRow(); if (i === sel) tr.className = "sel";
+      const th = document.createElement("th"); th.textContent = rows[i]; tr.appendChild(th);
+      if (onPick) { tr.style.cursor = "pointer"; tr.tabIndex = 0; tr.addEventListener("click", () => onPick(i)); tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(i); } }); }
+      r.forEach((v, j) => {
+        const td = tr.insertCell();
+        if (masked && masked[i][j]) { td.className = "masked"; td.textContent = Number.isFinite(v) ? fmt(v) : "−∞"; return; }
+        const h = heat((v - lo) / span); td.style.background = h.bg; td.style.color = h.fg; td.textContent = fmt(v);
+      });
+    });
+    wrap.appendChild(t); return wrap;
+  }
+
+  // hero + X table
+  $("heroToks").innerHTML = TOK.map((t, i) => `<span class="tok"><b>${t}</b><small>#${IDS[i]}</small></span>`).join("");
+  $("xTable").appendChild(matrix(X, { cols: DIMS, cap: "X：每個字一列（5 × 4）" }));
+
+  // attention player
+  const STEPS = [
+    ["X", "輸入"], ["Q", "Q = X·W_Q"], ["K", "K = X·W_K"], ["S", "分數 Q·Kᵀ"], ["SC", "÷ √d"], ["M", "遮未來"], ["A", "softmax"], ["O", "輸出 A·V"],
+  ];
+  let step = 0, sel = 1;
+  function attention(temp, maskOn) {
+    const Q = mm(X, WQ), K = mm(X, WK), V = mm(X, WV);
+    const S = mm(Q, T(K));
+    const SC = S.map(r => r.map(v => v / Math.sqrt(DK)));
+    const mask = SC.map((r, i) => r.map((_, j) => maskOn && j > i));
+    const M = SC.map((r, i) => r.map((v, j) => mask[i][j] ? -Infinity : v));
+    const A = M.map(r => softmaxRow(r.map(v => v * temp)));
+    const O = mm(A, V);
+    return { Q, K, V, S, SC, M, A, O, mask };
+  }
+  const EXPLAIN = {
+    X: () => `每個字是一列 4 維向量。點任何一列選要追蹤的字，現在追蹤「<b>${TOK[sel]}</b>」。`,
+    Q: r => `Q 是「我在找什麼」。「${TOK[sel]}」的 Q＝[${r.Q[sel].map(fmt).join(", ")}]。例如「坐」的 Q 全落在「動物」那一維：它在找主詞。`,
+    K: () => `K 是「我是什麼」。這個例子 W_K 是單位矩陣，所以 K 就等於 X：每個字直接用自己的特徵讓別人比對。`,
+    S: r => `分數＝ Q 跟每個 K 做內積，越像越高。「${TOK[sel]}」那一列：${TOK.map((t, j) => `${t} ${fmt(r.S[sel][j])}`).join("、")}。`,
+    SC: () => `除以 √d（這裡 √4＝2），避免維度大時內積爆大、softmax 變成只剩一個 1。`,
+    M: () => $("maskOn").checked ? `生成時不能偷看後面的字，所以第 i 列只保留 j ≤ i，其他設成 −∞（softmax 之後變 0）。灰色格就是被遮掉的。` : `目前關掉遮罩：每個字可以看整句（BERT 這類「理解型」模型就是這樣）。`,
+    A: r => `softmax 把每一列變成加起來＝1 的權重。「${TOK[sel]}」把 ${(Math.max(...r.A[sel]) * 100).toFixed(0)}% 的注意力給了「${TOK[r.A[sel].indexOf(Math.max(...r.A[sel]))]}」。拉「銳利度」可以看到分佈變尖或變平。`,
+    O: r => `輸出＝權重 × V 加總。「${TOK[sel]}」的新向量＝[${r.O[sel].map(fmt).join(", ")}]：它把看到的字的特徵混進自己身上，例如「坐」現在帶有「動物」成分，等於知道了是誰在坐。`,
+  };
+  function renderSteps() {
+    $("steps").innerHTML = "";
+    STEPS.forEach(([k, label], i) => {
+      const b = document.createElement("button"); b.textContent = `${i + 1}. ${label}`; if (i === step) b.className = "on";
+      b.addEventListener("click", () => { step = i; renderAttn(); }); $("steps").appendChild(b);
+    });
+  }
+  function renderAttn() {
+    const temp = parseFloat($("temp").value); $("tempV").textContent = temp.toFixed(1);
+    const r = attention(temp, $("maskOn").checked);
+    const key = STEPS[step][0];
+    renderSteps();
+    $("explain").innerHTML = EXPLAIN[key](r);
+    const pick = i => { sel = i; renderAttn(); };
+    const box = $("mats"); box.innerHTML = "";
+    const add = (M, o) => box.appendChild(matrix(M, Object.assign({ sel, onPick: pick }, o)));
+    if (key === "X") add(X, { cols: DIMS, cap: "X" });
+    if (key === "Q") { add(X, { cols: DIMS, cap: "X" }); add(r.Q, { cols: DIMS, cap: "Q = X·W_Q" }); }
+    if (key === "K") { add(r.K, { cols: DIMS, cap: "K = X·W_K" }); add(r.V, { cols: DIMS, cap: "V = X·W_V" }); }
+    if (key === "S") add(r.S, { cols: TOK, cap: "Q·Kᵀ（列＝誰在看，欄＝被看的）" });
+    if (key === "SC") add(r.SC, { cols: TOK, cap: "Q·Kᵀ / √d" });
+    if (key === "M") add(r.M, { cols: TOK, cap: "遮罩後", masked: r.mask });
+    if (key === "A") add(r.A, { cols: TOK, cap: "注意力權重 A（每列加總＝1）", scale: "prob", masked: r.mask });
+    if (key === "O") { add(r.A, { cols: TOK, cap: "A", scale: "prob", masked: r.mask }); add(r.O, { cols: DIMS, cap: "輸出 = A·V" }); }
+    renderHeads();
+  }
+  $("temp").addEventListener("input", renderAttn);
+  $("maskOn").addEventListener("change", renderAttn);
+
+  // multi-head: head 2 attends to the previous token via rotated position vectors
+  function renderHeads() {
+    const maskOn = $("maskOn").checked, temp = parseFloat($("temp").value);
+    const h1 = attention(temp, maskOn).A;
+    const th = 0.7, s = 3;
+    const P = TOK.map((_, i) => [Math.cos(i * th), Math.sin(i * th)]);
+    const Qp = TOK.map((_, i) => [s * Math.cos((i - 1) * th), s * Math.sin((i - 1) * th)]);
+    const S2 = Qp.map(q => P.map(k => (q[0] * k[0] + q[1] * k[1]) / Math.sqrt(2)));
+    const mask = S2.map((r, i) => r.map((_, j) => maskOn && j > i));
+    const h2 = S2.map((r, i) => softmaxRow(r.map((v, j) => mask[i][j] ? -Infinity : v * temp)));
+    const box = $("heads"); box.innerHTML = "";
+    box.appendChild(matrix(h1, { cols: TOK, cap: "Head 1 · 語意", scale: "prob", masked: mask }));
+    box.appendChild(matrix(h2, { cols: TOK, cap: "Head 2 · 前一個字", scale: "prob", masked: mask }));
+  }
+
+  // generation
+  const VOCAB = [["。", 3.2], ["睡覺", 2.5], ["看", 1.6], ["了", 1.4], ["跳", 1.0], ["吃", 0.5], ["貓", 2.6], ["墊子", 1.9]];
+  const CONTEXT = ["貓", "坐", "在", "墊子", "上"];
+  let generated = [], lastPick = null;
+  function probs() {
+    const t = parseFloat($("gtemp").value), k = parseInt($("topk").value, 10), rep = $("rep").checked;
+    const seen = new Set(CONTEXT.concat(generated));
+    let logits = VOCAB.map(([w, l]) => rep && seen.has(w) ? (l > 0 ? l / 1.3 : l * 1.3) : l);
+    if (k > 0) { const cut = [...logits].sort((a, b) => b - a)[k - 1]; logits = logits.map(l => l >= cut ? l : -Infinity); }
+    return softmaxRow(logits.map(l => l / t));
+  }
+  function renderGen() {
+    $("gtempV").textContent = parseFloat($("gtemp").value).toFixed(2);
+    const p = probs();
+    $("bars").innerHTML = VOCAB.map(([w], i) => `<div class="bar${w === lastPick ? " pick" : ""}"><span>${w}</span><span class="track"><span class="fill" style="width:${(p[i] * 100).toFixed(1)}%;display:block"></span></span><span class="v">${(p[i] * 100).toFixed(1)}%</span></div>`).join("");
+    $("out").innerHTML = CONTEXT.join("") + `<span class="gen">${generated.join("")}</span>`;
+  }
+  $("sample").addEventListener("click", () => {
+    const p = probs(); let r = Math.random(), i = 0;
+    for (; i < p.length - 1; i++) { r -= p[i]; if (r <= 0) break; }
+    lastPick = VOCAB[i][0]; generated.push(lastPick); if (generated.length > 12) generated.shift(); renderGen();
+  });
+  $("reset").addEventListener("click", () => { generated = []; lastPick = null; renderGen(); });
+  ["gtemp", "topk", "rep"].forEach(id => $(id).addEventListener("input", renderGen));
+  $("topk").addEventListener("change", renderGen); $("rep").addEventListener("change", renderGen);
+
+  // calculator
+  const human = (n, unit = "") => { const u = [["", 1], ["K", 1e3], ["M", 1e6], ["B", 1e9], ["T", 1e12]]; let s = u[0]; for (const x of u) if (n >= x[1]) s = x; return (n / s[1]).toFixed(n / s[1] < 10 ? 2 : 1) + " " + s[0] + unit; };
+  function renderCalc() {
+    const L = +$("L").value || 1, d = +$("d").value || 16, seq = +$("seq").value || 1;
+    const params = 12 * L * d * d, flops = 2 * params, kv = 2 * L * d * seq * 2;
+    const weights = params * 2;
+    $("calc").innerHTML = [
+      [human(params), "參數（不含詞表）"],
+      [human(flops, "FLOP"), "每生成一個字的運算量"],
+      [human(weights, "B").replace(" B", " B"), "權重大小（fp16）"],
+      [human(kv, "B"), `KV cache（一條 ${seq.toLocaleString()} 長度的對話）`],
+    ].map(([v, k]) => `<div class="stat"><span class="v">${v}</span><span class="k">${k}</span></div>`).join("");
+  }
+  $("preset").addEventListener("change", () => { const [L, d] = $("preset").value.split(","); $("L").value = L; $("d").value = d; renderCalc(); });
+  ["L", "d", "seq"].forEach(id => $(id).addEventListener("input", renderCalc));
+
+  renderAttn(); renderGen(); renderCalc();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAttn);
+  new MutationObserver(renderAttn).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>
+
+</body></html>
